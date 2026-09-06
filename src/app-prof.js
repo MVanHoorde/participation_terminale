@@ -19,7 +19,7 @@ if(!classes){
 let history = load(K_H, []);
 let sess = load(K_S, null);
 let merged=null, scanner=null, curPoste="A", arb={};
-let draft=null, grid=null, gridInfo=null, editing=null;
+let draft=null, grid=null, gridInfo=null, editing=null, drawGen=0;
 
 const clsNames = () => Object.keys(classes);
 const cfgOf = c => (classes[c] && classes[c].cfg) || defaultCfg("formatif");
@@ -64,6 +64,7 @@ function roleCounts(c){
   return n;
 }
 function fillObsSelects(){
+  drawGen++;                       // annule une animation de tirage en cours
   const c=$("#cls").value, l=namesOf(c), n=roleCounts(c);
   const o = l.map(x=>`<option value="${esc(x)}">${esc(x)}${n[x]?` — ${n[x]}×`:""}</option>`).join("");
   $("#obsA").innerHTML=o; $("#obsB").innerHTML=o;
@@ -91,14 +92,41 @@ function drawObservers(c){
   }
   return out;
 }
+/* Le tirage est entièrement décidé avant que l'animation démarre : celle-ci
+   ne fait que le révéler en ralentissant. Elle ne retire jamais au sort. */
+function spinDraw(names, picked, done){
+  const A=$("#obsA"), B=$("#obsB"), btn=$("#draw"), gen=drawGen;
+  const direct = names.length < 4 ||
+    (window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches);
+  if(direct){ A.value=picked[0]; B.value=picked[1]; done(); return; }
+  const autre = ex => { let n; do{ n=names[Math.floor(Math.random()*names.length)]; }while(n===ex); return n; };
+  btn.disabled=true;
+  $("#open").disabled=true;        // pas d'ouverture sur un nom de passage
+  $("#draw-info").textContent="Tirage en cours…";
+  let delay=50, figeA=false;
+  (function tick(){
+    if(gen!==drawGen){ btn.disabled=false; return; }   // classe changée : fillObsSelects a repris la main
+    if(!figeA) A.value=autre(B.value);
+    B.value=autre(A.value);
+    delay*=1.18;
+    if(delay>140 && !figeA){ figeA=true; A.value=picked[0]; }
+    if(delay>290){
+      B.value=picked[1];
+      btn.disabled=false; $("#open").disabled = names.length<3;
+      done(); return;
+    }
+    setTimeout(tick, delay);
+  })();
+}
 $("#draw").addEventListener("click",()=>{
   const c=$("#cls").value, d=drawObservers(c), cnt=roleCounts(c);
   if(d.length<2) return;
-  $("#obsA").value=d[0]; $("#obsB").value=d[1];
-  const jamais=Object.values(cnt).filter(v=>!v).length;
-  $("#draw-info").textContent =
-    `${d[0]} (${cnt[d[0]]||0} fois) et ${d[1]} (${cnt[d[1]]||0} fois). ` +
-    (jamais ? `${jamais} élève${jamais>1?"s n'ont":" n'a"} jamais observé.` : "Toute la classe est passée au moins une fois.");
+  spinDraw(namesOf(c), d, ()=>{
+    const jamais=Object.values(cnt).filter(v=>!v).length;
+    $("#draw-info").textContent =
+      `${d[0]} (${cnt[d[0]]||0} fois) et ${d[1]} (${cnt[d[1]]||0} fois). ` +
+      (jamais ? `${jamais} élève${jamais>1?"s n'ont":" n'a"} jamais observé.` : "Toute la classe est passée au moins une fois.");
+  });
 });
 $("#cls").addEventListener("change", fillObsSelects);
 
