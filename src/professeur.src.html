@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Participation">
+<title>Participation — professeur</title>
+<style>/*__CSS__*/
+.tabs{display:flex;gap:6px;padding:10px 14px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.tabs button{flex:1;padding:9px;border-radius:9px;font-weight:600;font-size:15px;color:var(--soft)}
+.tabs button.on{background:var(--ink);color:#fff}
+.poste{display:inline-block;background:var(--tealbg);color:var(--teal);font-weight:700;font-size:13px;padding:3px 9px;border-radius:20px}
+.big{font-size:34px;font-weight:700;letter-spacing:.06em;font-variant-numeric:tabular-nums}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+@media (max-width:620px){.duo{grid-template-columns:1fr}}
+.duo .one{background:var(--card);border:1.5px solid var(--line);border-radius:var(--r);padding:10px}
+.duo .one .hd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.duo .one .nmx{font-weight:650;font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.duo .qrbox{padding:0;margin:0}
+.zoom{position:fixed;inset:0;background:#fff;z-index:40;display:none;align-items:center;justify-content:center;padding:16px;flex-direction:column;gap:14px}
+.zoom.on{display:flex}
+.zoom .qrbox{max-width:min(88vw,560px);width:100%}
+.zoom .lbl{font-weight:650}
+.gauge{height:9px;border-radius:6px;background:var(--line);overflow:hidden;margin:8px 0 4px}
+.gauge i{display:block;height:100%;background:var(--teal)}
+.pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:20px;background:var(--canvas);color:var(--soft)}
+.pill.ok{background:var(--tealbg);color:var(--teal)}
+.pill.solo{background:#FBE9E3;color:var(--warn)}
+.bilan{background:var(--card);border:1.5px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:10px}
+.bilan h3{font-size:17px}
+.bilan textarea{min-height:70px;font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+
+<nav class="tabs">
+  <button data-t="#t-seance" class="on">Séance</button>
+  <button data-t="#t-suivi">Suivi</button>
+  <button data-t="#t-classes">Classes</button>
+</nav>
+
+<!-- ================= SÉANCE ================= -->
+<section class="screen on" id="t-seance">
+  <div class="wrap">
+
+    <div id="step-start">
+      <h1>Nouvelle séance</h1>
+      <p class="sub">Deux codes seront émis, un par observateur. Chacun ne sert qu'une fois.</p>
+      <div class="field">
+        <label for="cls">Classe</label>
+        <select id="cls"></select>
+      </div>
+      <div class="field">
+        <label>Observateurs désignés</label>
+        <p class="help">Pour le suivi de la rotation des rôles. Vous seul voyez cette information.</p>
+        <div class="row" style="gap:8px;margin-bottom:8px">
+          <select id="obsA" class="grow"></select>
+          <select id="obsB" class="grow"></select>
+        </div>
+        <button class="btn btn-ghost" id="draw" style="margin:0">Tirer au sort</button>
+        <p class="sub" id="draw-info" style="margin:8px 0 0;font-size:14px"></p>
+      </div>
+      <button class="btn btn-teal" id="open">Ouvrir la séance</button>
+    </div>
+
+    <div id="step-codes" style="display:none">
+      <h1>Codes de séance</h1>
+      <p class="sub" id="codes-sub">—</p>
+      <div class="duo" id="duo"></div>
+      <p class="sub" style="font-size:14px">Les deux observateurs scannent en même temps, chacun le sien. Touchez un code pour l'agrandir si la lecture accroche.</p>
+      <details class="card" style="padding:0;border:none;background:none;margin-bottom:12px">
+        <summary style="padding:10px 0;color:var(--soft);font-size:15px">Repli : codes en texte</summary>
+        <div class="field" style="margin-top:8px">
+          <label for="raw-A">Poste A</label><textarea id="raw-A" readonly spellcheck="false"></textarea>
+        </div>
+        <div class="field">
+          <label for="raw-B">Poste B</label><textarea id="raw-B" readonly spellcheck="false"></textarea>
+        </div>
+      </details>
+      <button class="btn" id="to-recv">Passer à la réception</button>
+      <button class="btn btn-ghost" id="redraw">Retirer au sort</button>
+      <button class="btn btn-ghost" id="cancel-sess">Annuler la séance</button>
+    </div>
+
+    <div id="step-recv" style="display:none">
+      <h1>Réception des relevés</h1>
+      <p class="sub" id="recv-sub">—</p>
+      <div class="scan" id="scanbox">
+        <video id="vid" playsinline muted></video><canvas id="cnv"></canvas><div class="frame"></div>
+      </div>
+      <p class="err" id="recv-err"></p>
+      <button class="btn btn-teal" id="scan-go">Activer la caméra</button>
+      <details class="card" style="padding:0;border:none;background:none;margin-bottom:12px">
+        <summary style="padding:10px 0;color:var(--soft);font-size:15px">Repli : coller un relevé</summary>
+        <textarea id="paste-r" placeholder="Coller le relevé" spellcheck="false" style="margin-top:8px"></textarea>
+        <button class="btn btn-ghost" id="paste-go">Ajouter ce relevé</button>
+      </details>
+      <button class="btn" id="to-sum" disabled>Voir la synthèse</button>
+      <button class="btn btn-ghost" id="back-codes">Revoir les codes</button>
+    </div>
+
+    <div id="step-sum" style="display:none">
+      <h1>Synthèse de la séance</h1>
+      <p class="sub" id="sum-sub">—</p>
+      <div class="card" id="conv-card"></div>
+      <div id="arb-card"></div>
+      <div class="tbl" id="sum-tbl"></div>
+      <div class="note">Un point isolé n'a été vu que par un observateur. C'est le plus souvent une inattention, pas une invention : la règle par défaut est de le retenir. Les écarts marqués vous sont signalés ci-dessus pour arbitrage.</div>
+      <div class="field">
+        <label for="keep">Règle par défaut pour les points isolés</label>
+        <p class="help">S'applique aux élèves que vous n'avez pas arbitrés individuellement.</p>
+        <select id="keep">
+          <option value="all">Tout retenir : un oubli d'observateur ne pénalise pas l'élève</option>
+          <option value="conf">Écarter tous les points isolés</option>
+          <option value="half">Retenir la moitié des points isolés</option>
+        </select>
+      </div>
+      <button class="btn btn-teal" id="validate">Valider et enregistrer</button>
+      <button class="btn btn-ghost" id="discard">Abandonner cette séance</button>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= SUIVI ================= -->
+<section class="screen" id="t-suivi">
+  <div class="wrap">
+    <h1>Suivi de l'année</h1>
+    <p class="sub" id="suivi-sub">—</p>
+    <div id="backup-warn"></div>
+    <div class="field">
+      <label for="cls2">Classe</label>
+      <select id="cls2"></select>
+    </div>
+    <div class="tbl" id="annual"></div>
+    <button class="btn" id="export">Exporter une sauvegarde</button>
+    <button class="btn btn-ghost" id="bilans">Produire les bilans élèves</button>
+    <div id="bilan-out"></div>
+    <details class="card" style="padding:0;border:none;background:none;margin-top:8px">
+      <summary style="padding:10px 0;color:var(--soft);font-size:15px">Restaurer une sauvegarde</summary>
+      <p class="help" style="margin-top:8px">Remplace intégralement les données de cet appareil.</p>
+      <input type="file" id="restore" accept="application/json" style="margin-bottom:10px">
+    </details>
+  </div>
+</section>
+
+<!-- ================= CLASSES ================= -->
+<section class="screen" id="t-classes">
+  <div class="wrap">
+
+    <div id="c-list">
+      <h1>Classes</h1>
+      <p class="sub">Les listes et les réglages restent sur cet appareil. Rien n'est publié.</p>
+      <div class="tbl" id="clslist"></div>
+      <button class="btn btn-teal" id="c-new">Créer une classe</button>
+      <div class="warnbox">
+        Safari efface les données d'un site après sept jours sans visite. Ajoutez cette page à
+        l'écran d'accueil et exportez une sauvegarde chaque semaine.
+      </div>
+    </div>
+
+    <div id="c-source" style="display:none">
+      <h1>Créer une classe</h1>
+      <p class="sub">Comment voulez-vous constituer la liste ?</p>
+      <div class="card">
+        <strong>Importer un fichier</strong>
+        <p class="sub" style="margin:4px 0 10px;font-size:14.5px">Export Pronote, École Directe, Siècle ou tableur personnel. Formats .xlsx et .csv. Le fichier est lu sur cet appareil, il n'est envoyé nulle part.</p>
+        <input type="file" id="c-file" accept=".xlsx,.csv,.tsv,text/csv">
+      </div>
+      <div class="card">
+        <strong>Saisir à la main</strong>
+        <p class="sub" style="margin:4px 0 10px;font-size:14.5px">Un élève par ligne.</p>
+        <button class="btn btn-ghost" id="c-manual" style="margin:0">Saisie manuelle</button>
+      </div>
+      <p class="err" id="c-err"></p>
+      <button class="btn btn-ghost" id="c-cancel1">Annuler</button>
+    </div>
+
+    <div id="c-map" style="display:none">
+      <h1>Colonnes du fichier</h1>
+      <p class="sub" id="c-map-sub">—</p>
+      <div class="field">
+        <label for="m-name">Colonne contenant le nom</label>
+        <select id="m-name"></select>
+      </div>
+      <div class="field">
+        <label for="m-first">Colonne contenant le prénom</label>
+        <p class="help">Certains exports réunissent nom et prénom dans une seule colonne.</p>
+        <select id="m-first"></select>
+      </div>
+      <div class="field">
+        <label for="m-fmt">Affichage dans l'application</label>
+        <select id="m-fmt">
+          <option value="prenom-nom">Prénom Nom</option>
+          <option value="nom-prenom">NOM Prénom</option>
+          <option value="prenom-initiale">Prénom N.</option>
+          <option value="prenom">Prénom seul</option>
+        </select>
+      </div>
+      <div class="card" id="c-preview"></div>
+      <button class="btn" id="c-map-ok">Continuer</button>
+      <button class="btn btn-ghost" id="c-cancel2">Annuler</button>
+    </div>
+
+    <div id="c-edit" style="display:none">
+      <h1 id="c-edit-h">Liste des élèves</h1>
+      <p class="sub">Un nom par ligne. L'ordre compte : ne le modifiez plus une fois des séances enregistrées.</p>
+      <div class="field">
+        <label for="c-name">Nom de la classe</label>
+        <input type="text" id="c-name" placeholder="Terminale 3">
+      </div>
+      <div class="field">
+        <label for="c-lst">Élèves</label>
+        <textarea id="c-lst" spellcheck="false" style="min-height:230px"></textarea>
+      </div>
+      <button class="btn" id="c-edit-ok">Continuer</button>
+      <button class="btn btn-ghost" id="c-cancel3">Annuler</button>
+    </div>
+
+    <div id="c-model" style="display:none">
+      <h1>Modèle d'évaluation</h1>
+      <p class="sub">Tout reste modifiable ensuite, classe par classe.</p>
+      <div id="c-models"></div>
+      <button class="btn btn-ghost" id="c-cancel4">Annuler</button>
+    </div>
+
+    <div id="c-cfg" style="display:none">
+      <h1 id="c-cfg-h">Réglages</h1>
+      <p class="sub" id="c-cfg-sub">—</p>
+
+      <h3 style="margin-bottom:8px">Barème des interventions</h3>
+      <div class="tbl" id="cfg-types"></div>
+      <button class="btn btn-ghost" id="cfg-addtype" style="margin-bottom:22px">Ajouter un type</button>
+
+      <div class="field">
+        <label for="cfg-cap">Plafond par élève et par séance</label>
+        <p class="help">Empêche un élève très actif d'écraser le relevé.</p>
+        <select id="cfg-cap"></select>
+      </div>
+      <div class="field">
+        <label for="cfg-solo">Points relevés par un seul observateur</label>
+        <select id="cfg-solo">
+          <option value="all">Comptés en entier</option>
+          <option value="half">Comptés pour moitié</option>
+          <option value="conf">Écartés</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="cfg-absent">Élèves absents</label>
+        <select id="cfg-absent">
+          <option value="skip">Séance neutralisée pour eux</option>
+          <option value="zero">Comptés zéro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="cfg-credit">Crédit accordé aux observateurs</label>
+        <p class="help">Forfait de base pour la séance, majoré selon la convergence des deux relevés. Sans cela, tenir le rôle coûte des points.</p>
+        <select id="cfg-credit"></select>
+      </div>
+      <div class="field">
+        <label for="cfg-tirage">Tirage des observateurs</label>
+        <p class="help">Le compteur se reporte d'une période à l'autre : personne n'est oublié sur l'année.</p>
+        <select id="cfg-tirage">
+          <option value="equite">Priorité à l'équité — ceux qui ont le moins observé passent devant</option>
+          <option value="hasard">Plus de hasard — équité moins stricte</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="cfg-resti">Restitution</label>
+        <select id="cfg-resti">
+          <option value="none">Formatif seul, aucune note</option>
+          <option value="bonus">Bonus de 0 à +1 sur la moyenne</option>
+          <option value="echelle">Échelle à quatre niveaux</option>
+          <option value="note">Note sur 20</option>
+        </select>
+      </div>
+      <div class="field" id="cfg-obj-wrap">
+        <label for="cfg-obj">Objectif de la période</label>
+        <p class="help">Nombre de points qui vaut le maximum. Référence fixe, indépendante du niveau de la classe.</p>
+        <input type="text" id="cfg-obj" inputmode="numeric">
+      </div>
+      <button class="btn btn-ghost" id="cfg-edit-list">Modifier la liste des élèves</button>
+      <button class="btn btn-teal" id="cfg-save">Enregistrer</button>
+      <button class="btn btn-ghost" id="cfg-del">Supprimer cette classe</button>
+      <button class="btn btn-ghost" id="cfg-back">Retour</button>
+    </div>
+
+  </div>
+</section>
+
+<div class="zoom" id="zoom"><div class="lbl" id="zoom-lbl"></div><div class="qrbox" id="zoom-qr"></div><button class="btn btn-ghost" id="zoom-close" style="max-width:320px">Fermer</button></div>
+
+<script>/*__QRGEN__*/</script>
+<script>/*__JSQR__*/</script>
+<script>/*__COMMON__*/</script>
+<script>
+/*__APP__*/
+</script>
+</body>
+</html>

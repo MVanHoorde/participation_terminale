@@ -1,0 +1,11 @@
+# Sauvegardes exportées par l'application : contiennent des données nominatives d'élèves
+*.json
+!package.json
+
+# Exports de listes de classes
+*.xlsx
+*.csv
+*.tsv
+
+.DS_Store
+node_modules/
