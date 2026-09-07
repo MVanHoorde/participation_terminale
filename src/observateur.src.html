@@ -21,6 +21,11 @@
 .tile .pts{font-size:20px;font-weight:700;color:var(--teal)}
 .tile .cnt{font-size:12px;color:var(--soft)}
 .tile .fill{position:absolute;left:0;right:0;bottom:0;background:var(--tealbg);z-index:0;transition:height .2s ease}
+.tile .body{flex:1;display:flex;flex-direction:column;justify-content:space-between;min-width:0}
+.grid.avec-photos .tile{flex-direction:row;gap:9px;align-items:stretch;min-height:74px}
+.tile .face{width:42px;height:56px;border-radius:6px;flex:none;position:relative;z-index:1;
+  border:1px solid var(--line);background-repeat:no-repeat;background-image:var(--sheet);
+  background-size:var(--sheet-w) auto}
 .tile.self{opacity:.42}
 .tile.absent{opacity:.34;background:repeating-linear-gradient(45deg,#fff,#fff 7px,#EEF2F3 7px,#EEF2F3 14px)}
 .tile.zero .pts{color:var(--line)}
@@ -63,6 +68,21 @@
       </div>
       <button class="btn btn-ghost" id="paste-go">Utiliser ce code</button>
     </details>
+  </div>
+</section>
+
+<section class="screen" id="s-photos">
+  <div class="wrap">
+    <h1>Photos de la classe</h1>
+    <p class="sub">Visez l'écran du professeur sans bouger. Les photos arrivent par morceaux&nbsp;: restez dessus jusqu'à ce que la barre soit pleine.</p>
+    <div class="scan" id="pbox">
+      <video id="pvid" playsinline muted></video><canvas id="pcnv"></canvas><div class="frame"></div>
+    </div>
+    <div class="gauge"><i id="pgauge" style="width:0"></i></div>
+    <p class="sub" id="pinfo" style="margin-bottom:14px">En attente du premier fragment…</p>
+    <p class="err" id="perr"></p>
+    <button class="btn btn-teal" id="pgo">Activer la caméra</button>
+    <button class="btn btn-ghost" id="pskip">Continuer sans les photos</button>
   </div>
 </section>
 
@@ -122,8 +142,10 @@
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
-const K="pv.obs.live";
+const K="pv.obs.live", K_P="pv.obs.pack";
 let S=null, TY=[], live=null, pending=null, tick=null, scanner=null;
+let pack=load(K_P,null), pscan=null, frags=null;
+const FW=42, FH=56, COLS=7;   // taille d'affichage d'un visage, 7 par ligne dans la planche
 
 function show(id){document.querySelectorAll(".screen").forEach(e=>e.classList.remove("on"));$(id).classList.add("on");window.scrollTo(0,0)}
 
@@ -148,8 +170,52 @@ function begin(sess){
     live = {token:S.token, start:Date.now(), ev:[], abs:[]};
     save(K,live);
   }
+  if(S.pack && !(pack && pack.id===S.pack)) startPhotos();
+  else startLive();
+}
+
+/* ---------- Réception de la planche de photos ----------
+   Le professeur fait défiler les fragments en boucle ; on les ramasse dans
+   l'ordre où ils passent, puis on vérifie l'empreinte avant de s'en servir. */
+function startPhotos(){
+  frags = {n:0, got:{}};
+  $("#perr").textContent = "";
+  $("#pgo").textContent = "Activer la caméra";
+  paintGauge();
+  show("#s-photos");
+}
+function paintGauge(){
+  const got = Object.keys(frags.got).length, n = frags.n || 0;
+  $("#pgauge").style.width = n ? (100*got/n) + "%" : "0";
+  $("#pinfo").textContent = n
+    ? `${got} fragment${got>1?"s":""} sur ${n}`
+    : "En attente du premier fragment…";
+}
+function onFrag(txt){
+  const f = decPhotoFrame(txt);
+  if(!f) return;
+  if(f.pack !== S.pack){ $("#perr").textContent = "Ce code ne correspond pas à cette classe."; return; }
+  if(frags.got[f.i]) return;
+  frags.n = f.n; frags.got[f.i] = f.data;
+  paintGauge();
+  if(Object.keys(frags.got).length !== f.n) return;
+  const b64 = Array.from({length:f.n}, (_,k)=>frags.got[k+1]).join("");
+  const sheet = "data:image/jpeg;base64," + b64;
+  if(hash36(sheet) !== S.pack){        // un fragment est arrivé abîmé
+    frags = {n:0, got:{}}; paintGauge();
+    $("#perr").textContent = "Les photos sont arrivées abîmées. La réception recommence toute seule.";
+    return;
+  }
+  pack = {id:S.pack, sheet};
+  save(K_P, pack);
+  pscan.stop();
   startLive();
 }
+pscan = makeScanner($("#pvid"), $("#pcnv"), onFrag, m=>{ $("#perr").textContent = m; }, {continu:true});
+$("#pgo").addEventListener("click", ()=>{
+  $("#perr").textContent = ""; pscan.start(); $("#pgo").textContent = "Réception en cours…";
+});
+$("#pskip").addEventListener("click", ()=>{ pscan.stop(); startLive(); });
 
 /* ---------- Relevé ---------- */
 function startLive(){
@@ -160,11 +226,20 @@ function startLive(){
 }
 function paintGrid(){
   const g=$("#grid");
+  const avec = !!(pack && S.pack && pack.id===S.pack);
+  g.classList.toggle("avec-photos", avec);
+  if(avec){
+    g.style.setProperty("--sheet", `url("${pack.sheet}")`);
+    g.style.setProperty("--sheet-w", (COLS*FW) + "px");
+  }
   g.innerHTML = S.names.map((n,i)=>`
     <button class="tile" data-i="${i}">
       <span class="fill" style="height:0"></span>
-      <span class="nm">${esc(n)}</span>
-      <span class="ln"><span class="pts">0</span><span class="cnt"></span></span>
+      ${avec ? `<span class="face" style="background-position:-${(i%COLS)*FW}px -${Math.floor(i/COLS)*FH}px"></span>` : ""}
+      <span class="body">
+        <span class="nm">${esc(n)}</span>
+        <span class="ln"><span class="pts">0</span><span class="cnt"></span></span>
+      </span>
     </button>`).join("");
   g.querySelectorAll(".tile").forEach(b=>b.addEventListener("click",()=>openSheet(+b.dataset.i)));
 }
@@ -258,8 +333,9 @@ $("#finish").addEventListener("click",()=>{
 });
 $("#back").addEventListener("click",()=>{ tick=setInterval(refresh,1000); show("#s-live"); });
 $("#wipe").addEventListener("click",()=>{
-  if(!confirm("Effacer le relevé de cet appareil ? À faire une fois que le professeur l'a scanné.")) return;
-  localStorage.removeItem(K); localStorage.removeItem("pv.obs.sess"); live=null; S=null;
+  if(!confirm("Effacer le relevé et les photos de cet appareil ? À faire une fois que le professeur a scanné le relevé.")) return;
+  localStorage.removeItem(K); localStorage.removeItem("pv.obs.sess"); localStorage.removeItem(K_P);
+  live=null; S=null; pack=null;
   $("#scan-go").textContent="Activer la caméra";
   show("#s-home");
 });

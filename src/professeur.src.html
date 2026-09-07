@@ -22,14 +22,31 @@
 .zoom.on{display:flex}
 .zoom .qrbox{max-width:min(88vw,560px);width:100%}
 .zoom .lbl{font-weight:650}
-.gauge{height:9px;border-radius:6px;background:var(--line);overflow:hidden;margin:8px 0 4px}
-.gauge i{display:block;height:100%;background:var(--teal)}
 .pill{display:inline-block;font-size:12px;font-weight:600;padding:2px 8px;border-radius:20px;background:var(--canvas);color:var(--soft)}
 .pill.ok{background:var(--tealbg);color:var(--teal)}
 .pill.solo{background:#FBE9E3;color:var(--warn)}
 .bilan{background:var(--card);border:1.5px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:10px}
 .bilan h3{font-size:17px}
 .bilan textarea{min-height:70px;font-size:13px;margin-top:8px}
+.adj{width:32px;height:32px;border-radius:8px;border:1.5px solid var(--line);font-weight:700;
+     font-size:18px;line-height:1;flex:none;color:var(--ink)}
+.adj:active{background:var(--tealbg);border-color:var(--teal)}
+.adj:disabled{opacity:.3}
+.ctrl{display:flex;align-items:center;gap:7px;flex:none}
+.ctrl .v{width:34px;text-align:center;font-variant-numeric:tabular-nums;font-weight:700}
+.plein{position:fixed;inset:0;background:var(--canvas);z-index:45;display:none;overflow:auto}
+.plein.on{display:block}
+
+/* Roue de vérification */
+.wheelbox{position:relative;width:min(76vw,340px)}
+.wheelbox .pointer{position:absolute;top:-3px;left:50%;transform:translateX(-50%);width:0;height:0;
+  border-left:13px solid transparent;border-right:13px solid transparent;
+  border-top:21px solid var(--ink);z-index:2;filter:drop-shadow(0 1px 2px rgba(0,0,0,.25))}
+.wheelbox .disc{transform:rotate(0deg)}
+.wheelbox .disc.tourne{transition:transform 3.4s cubic-bezier(.17,.72,.15,1)}
+#wheel-res{text-align:center;min-height:150px;display:flex;flex-direction:column;align-items:center;gap:8px}
+#wheel-res .qui{font-size:24px;font-weight:700;letter-spacing:-.02em}
+#wheel-res .ava{margin:0 auto}
 </style>
 </head>
 <body>
@@ -78,6 +95,7 @@
           <label for="raw-B">Poste B</label><textarea id="raw-B" readonly spellcheck="false"></textarea>
         </div>
       </details>
+      <button class="btn btn-teal" id="send-photos" style="display:none">Envoyer les photos aux observateurs</button>
       <button class="btn" id="to-recv">Passer à la réception</button>
       <button class="btn btn-ghost" id="redraw">Retirer au sort</button>
       <button class="btn btn-ghost" id="cancel-sess">Annuler la séance</button>
@@ -96,6 +114,7 @@
         <textarea id="paste-r" placeholder="Coller le relevé" spellcheck="false" style="margin-top:8px"></textarea>
         <button class="btn btn-ghost" id="paste-go">Ajouter ce relevé</button>
       </details>
+      <button class="btn btn-teal" id="wheel-open">Vérifier une prise de notes</button>
       <button class="btn" id="to-sum" disabled>Voir la synthèse</button>
       <button class="btn btn-ghost" id="back-codes">Revoir les codes</button>
     </div>
@@ -116,6 +135,7 @@
           <option value="half">Retenir la moitié des points isolés</option>
         </select>
       </div>
+      <button class="btn btn-ghost" id="wheel-open2">Vérifier une autre prise de notes</button>
       <button class="btn btn-teal" id="validate">Valider et enregistrer</button>
       <button class="btn btn-ghost" id="discard">Abandonner cette séance</button>
     </div>
@@ -134,6 +154,9 @@
       <select id="cls2"></select>
     </div>
     <div class="tbl" id="annual"></div>
+    <h3 style="margin:6px 0 8px">Séances enregistrées</h3>
+    <p class="sub" style="font-size:14px;margin-bottom:8px">Reprenez une séance pour corriger les points d'un élève oublié.</p>
+    <div class="tbl" id="seances"></div>
     <button class="btn" id="export">Exporter une sauvegarde</button>
     <button class="btn btn-ghost" id="bilans">Produire les bilans élèves</button>
     <div id="bilan-out"></div>
@@ -280,6 +303,18 @@
         <p class="help">Nombre de points qui vaut le maximum. Référence fixe, indépendante du niveau de la classe.</p>
         <input type="text" id="cfg-obj" inputmode="numeric">
       </div>
+      <h3 style="margin-bottom:8px">Photos des élèves</h3>
+      <p class="help">Les photos restent sur cet appareil et dans vos sauvegardes. Elles ne
+        partent jamais vers les iPads des observateurs : un QR code ne peut pas les porter.</p>
+      <div class="card">
+        <p class="sub" style="margin:0 0 10px;font-size:14.5px" id="cfg-photo-etat">—</p>
+        <label class="help" for="cfg-photo-file">Importer un fichier photos</label>
+        <input type="file" id="cfg-photo-file" accept="application/json" style="margin:6px 0 12px">
+        <button class="btn btn-ghost" id="cfg-photo-exp" style="margin:0 0 8px">Exporter le fichier photos</button>
+        <button class="btn btn-ghost" id="cfg-photo-del" style="margin:0">Retirer les photos de cette classe</button>
+        <p class="err" id="cfg-photo-err" style="margin:8px 0 0"></p>
+      </div>
+
       <button class="btn btn-ghost" id="cfg-edit-list">Modifier la liste des élèves</button>
       <button class="btn btn-teal" id="cfg-save">Enregistrer</button>
       <button class="btn btn-ghost" id="cfg-del">Supprimer cette classe</button>
@@ -288,6 +323,34 @@
 
   </div>
 </section>
+
+<div class="plein" id="corr">
+  <div class="wrap">
+    <h1 id="corr-h">Corriger une séance</h1>
+    <p class="sub" id="corr-sub">—</p>
+    <div class="note">Les points ajoutés ici s'ajoutent au relevé des observateurs. Le détail d'origine est conservé : vous pouvez toujours revenir en arrière.</div>
+    <div class="tbl" id="corr-tbl"></div>
+    <button class="btn btn-teal" id="corr-save">Enregistrer les corrections</button>
+    <button class="btn btn-ghost" id="corr-close">Annuler</button>
+  </div>
+</div>
+
+<div class="zoom" id="wheel">
+  <div class="lbl">Vérification des prises de notes</div>
+  <div class="wheelbox"><div class="pointer"></div><div class="disc" id="wheel-disc"></div></div>
+  <div id="wheel-res"></div>
+  <div class="row" style="gap:10px;max-width:380px;width:100%">
+    <button class="btn btn-teal grow" id="wheel-go" style="margin:0">Tourner</button>
+    <button class="btn btn-ghost grow" id="wheel-close" style="margin:0">Fermer</button>
+  </div>
+</div>
+
+<div class="zoom" id="psend">
+  <div class="lbl" id="psend-lbl">—</div>
+  <div class="qrbox" id="psend-qr"></div>
+  <p class="sub" id="psend-info" style="margin:0;text-align:center;font-size:14px">—</p>
+  <button class="btn btn-ghost" id="psend-close" style="max-width:320px">Terminé</button>
+</div>
 
 <div class="zoom" id="zoom"><div class="lbl" id="zoom-lbl"></div><div class="qrbox" id="zoom-qr"></div><button class="btn btn-ghost" id="zoom-close" style="max-width:320px">Fermer</button></div>
 

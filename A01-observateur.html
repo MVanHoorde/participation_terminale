@@ -63,6 +63,15 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
 .tbl .n.hi{font-weight:700;color:var(--teal)}
 .tbl .n.dim{color:var(--soft)}
 .tbl .r.none .nm{color:var(--soft);font-weight:500}
+.gauge{height:9px;border-radius:6px;background:var(--line);overflow:hidden;margin:8px 0 4px}
+.gauge i{display:block;height:100%;background:var(--teal);transition:width .2s ease}
+
+/* Photos d'élèves : côté professeur uniquement, jamais transmises par QR */
+.ava{width:32px;height:43px;border-radius:6px;object-fit:cover;background:var(--canvas);
+     border:1px solid var(--line);flex:none;display:block}
+.ava.vide{background:repeating-linear-gradient(45deg,#fff,#fff 5px,#EEF2F3 5px,#EEF2F3 10px)}
+.ava.gr{width:104px;height:139px;border-radius:10px}
+
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 /* ---- écran de relevé ---- */
@@ -79,6 +88,11 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
 .tile .pts{font-size:20px;font-weight:700;color:var(--teal)}
 .tile .cnt{font-size:12px;color:var(--soft)}
 .tile .fill{position:absolute;left:0;right:0;bottom:0;background:var(--tealbg);z-index:0;transition:height .2s ease}
+.tile .body{flex:1;display:flex;flex-direction:column;justify-content:space-between;min-width:0}
+.grid.avec-photos .tile{flex-direction:row;gap:9px;align-items:stretch;min-height:74px}
+.tile .face{width:42px;height:56px;border-radius:6px;flex:none;position:relative;z-index:1;
+  border:1px solid var(--line);background-repeat:no-repeat;background-image:var(--sheet);
+  background-size:var(--sheet-w) auto}
 .tile.self{opacity:.42}
 .tile.absent{opacity:.34;background:repeating-linear-gradient(45deg,#fff,#fff 7px,#EEF2F3 7px,#EEF2F3 14px)}
 .tile.zero .pts{color:var(--line)}
@@ -121,6 +135,21 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
       </div>
       <button class="btn btn-ghost" id="paste-go">Utiliser ce code</button>
     </details>
+  </div>
+</section>
+
+<section class="screen" id="s-photos">
+  <div class="wrap">
+    <h1>Photos de la classe</h1>
+    <p class="sub">Visez l'écran du professeur sans bouger. Les photos arrivent par morceaux&nbsp;: restez dessus jusqu'à ce que la barre soit pleine.</p>
+    <div class="scan" id="pbox">
+      <video id="pvid" playsinline muted></video><canvas id="pcnv"></canvas><div class="frame"></div>
+    </div>
+    <div class="gauge"><i id="pgauge" style="width:0"></i></div>
+    <p class="sub" id="pinfo" style="margin-bottom:14px">En attente du premier fragment…</p>
+    <p class="err" id="perr"></p>
+    <button class="btn btn-teal" id="pgo">Activer la caméra</button>
+    <button class="btn btn-ghost" id="pskip">Continuer sans les photos</button>
   </div>
 </section>
 
@@ -214,17 +243,45 @@ function defaultCfg(modele){
 const b36 = n => Math.max(0,Math.round(n)).toString(36);
 const p36 = s => parseInt(s,36)||0;
 
-/* --- QR de séance : jeton + poste + classe + date + liste --- */
+/* --- QR de séance : jeton + poste + classe + date + planche + liste --- */
 function encSession(s){
   const ty = s.types.map(t=>[t.w, t.l, t.d||""].join("*")).join("~");
-  return ["PVS2", s.token, s.poste, s.cls, s.date, s.cap||0, ty, s.names.join("~")].join("|");
+  return ["PVS3", s.token, s.poste, s.cls, s.date, s.cap||0, ty, s.pack||"", s.names.join("~")].join("|");
 }
 function decSession(txt){
   const p = String(txt||"").trim().split("|");
-  if(p[0]!=="PVS2" || p.length<8) throw new Error("Ce code n'est pas un code de séance valide.");
+  if(p[0]==="PVS2") throw new Error("Ce code vient d'une version plus ancienne de l'application professeur.");
+  if(p[0]!=="PVS3" || p.length<9) throw new Error("Ce code n'est pas un code de séance valide.");
   return {token:p[1], poste:p[2], cls:p[3], date:p[4], cap:+p[5]||0,
           types:p[6].split("~").filter(Boolean).map(x=>{const a=x.split("*");return {w:+a[0],l:a[1],d:a[2]||""}}),
-          names:p.slice(7).join("|").split("~").filter(Boolean)};
+          pack:p[7]||"",
+          names:p.slice(8).join("|").split("~").filter(Boolean)};
+}
+
+/* --- Planche de photos, découpée en fragments QR ---
+   Une seule image JPEG pour toute la classe : un en-tête au lieu de vingt et un.
+   900 caractères par fragment maintient chaque QR en version 22 (105 modules),
+   la densité qui se lit déjà correctement d'un iPad à l'autre. */
+const PHOTO_CHUNK = 900;
+function encPhotoFrames(pack, b64){
+  const n = Math.ceil(b64.length / PHOTO_CHUNK), out = [];
+  for(let i=0; i<n; i++)
+    out.push(["PVP1", pack, i+1, n, b64.substr(i*PHOTO_CHUNK, PHOTO_CHUNK)].join("|"));
+  return out;
+}
+function decPhotoFrame(txt){
+  const p = String(txt||"").trim().split("|");
+  if(p[0]!=="PVP1" || p.length<5) return null;
+  const i = +p[2], n = +p[3];
+  if(!(i>=1 && n>=1 && i<=n)) return null;
+  return {pack:p[1], i, n, data:p.slice(4).join("|")};
+}
+/* Empreinte courte d'une planche : permet à l'observateur de savoir s'il a
+   déjà la bonne, et d'ignorer un fragment venu d'une autre classe. */
+function hash36(s){
+  let h = 2166136261 >>> 0;
+  for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h.toString(36).toUpperCase().padStart(6,"0").slice(-6);
 }
 
 /* --- QR de relevé : jeton + départ + évènements --- */
@@ -277,7 +334,8 @@ function drawQR(el, text, px){
 }
 
 /* --- Lecteur QR via caméra --- */
-function makeScanner(video, canvas, onFound, onError){
+function makeScanner(video, canvas, onFound, onError, opts){
+  const continu = !!(opts && opts.continu);   // ramasser plusieurs codes sans s'arrêter
   let stream=null, raf=null, running=false;
   const ctx = canvas.getContext("2d",{willReadFrequently:true});
   async function start(){
@@ -303,7 +361,10 @@ function makeScanner(video, canvas, onFound, onError){
         ctx.drawImage(video,0,0,w,h);
         const img = ctx.getImageData(0,0,w,h);
         const res = jsQR(img.data, w, h, {inversionAttempts:"dontInvert"});
-        if(res && res.data){ stop(); onFound(res.data); return; }
+        if(res && res.data){
+          if(continu){ onFound(res.data); }
+          else { stop(); onFound(res.data); return; }
+        }
       }
     }
     raf = requestAnimationFrame(loop);
@@ -320,8 +381,10 @@ function makeScanner(video, canvas, onFound, onError){
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
-const K="pv.obs.live";
+const K="pv.obs.live", K_P="pv.obs.pack";
 let S=null, TY=[], live=null, pending=null, tick=null, scanner=null;
+let pack=load(K_P,null), pscan=null, frags=null;
+const FW=42, FH=56, COLS=7;   // taille d'affichage d'un visage, 7 par ligne dans la planche
 
 function show(id){document.querySelectorAll(".screen").forEach(e=>e.classList.remove("on"));$(id).classList.add("on");window.scrollTo(0,0)}
 
@@ -346,8 +409,52 @@ function begin(sess){
     live = {token:S.token, start:Date.now(), ev:[], abs:[]};
     save(K,live);
   }
+  if(S.pack && !(pack && pack.id===S.pack)) startPhotos();
+  else startLive();
+}
+
+/* ---------- Réception de la planche de photos ----------
+   Le professeur fait défiler les fragments en boucle ; on les ramasse dans
+   l'ordre où ils passent, puis on vérifie l'empreinte avant de s'en servir. */
+function startPhotos(){
+  frags = {n:0, got:{}};
+  $("#perr").textContent = "";
+  $("#pgo").textContent = "Activer la caméra";
+  paintGauge();
+  show("#s-photos");
+}
+function paintGauge(){
+  const got = Object.keys(frags.got).length, n = frags.n || 0;
+  $("#pgauge").style.width = n ? (100*got/n) + "%" : "0";
+  $("#pinfo").textContent = n
+    ? `${got} fragment${got>1?"s":""} sur ${n}`
+    : "En attente du premier fragment…";
+}
+function onFrag(txt){
+  const f = decPhotoFrame(txt);
+  if(!f) return;
+  if(f.pack !== S.pack){ $("#perr").textContent = "Ce code ne correspond pas à cette classe."; return; }
+  if(frags.got[f.i]) return;
+  frags.n = f.n; frags.got[f.i] = f.data;
+  paintGauge();
+  if(Object.keys(frags.got).length !== f.n) return;
+  const b64 = Array.from({length:f.n}, (_,k)=>frags.got[k+1]).join("");
+  const sheet = "data:image/jpeg;base64," + b64;
+  if(hash36(sheet) !== S.pack){        // un fragment est arrivé abîmé
+    frags = {n:0, got:{}}; paintGauge();
+    $("#perr").textContent = "Les photos sont arrivées abîmées. La réception recommence toute seule.";
+    return;
+  }
+  pack = {id:S.pack, sheet};
+  save(K_P, pack);
+  pscan.stop();
   startLive();
 }
+pscan = makeScanner($("#pvid"), $("#pcnv"), onFrag, m=>{ $("#perr").textContent = m; }, {continu:true});
+$("#pgo").addEventListener("click", ()=>{
+  $("#perr").textContent = ""; pscan.start(); $("#pgo").textContent = "Réception en cours…";
+});
+$("#pskip").addEventListener("click", ()=>{ pscan.stop(); startLive(); });
 
 /* ---------- Relevé ---------- */
 function startLive(){
@@ -358,11 +465,20 @@ function startLive(){
 }
 function paintGrid(){
   const g=$("#grid");
+  const avec = !!(pack && S.pack && pack.id===S.pack);
+  g.classList.toggle("avec-photos", avec);
+  if(avec){
+    g.style.setProperty("--sheet", `url("${pack.sheet}")`);
+    g.style.setProperty("--sheet-w", (COLS*FW) + "px");
+  }
   g.innerHTML = S.names.map((n,i)=>`
     <button class="tile" data-i="${i}">
       <span class="fill" style="height:0"></span>
-      <span class="nm">${esc(n)}</span>
-      <span class="ln"><span class="pts">0</span><span class="cnt"></span></span>
+      ${avec ? `<span class="face" style="background-position:-${(i%COLS)*FW}px -${Math.floor(i/COLS)*FH}px"></span>` : ""}
+      <span class="body">
+        <span class="nm">${esc(n)}</span>
+        <span class="ln"><span class="pts">0</span><span class="cnt"></span></span>
+      </span>
     </button>`).join("");
   g.querySelectorAll(".tile").forEach(b=>b.addEventListener("click",()=>openSheet(+b.dataset.i)));
 }
@@ -456,8 +572,9 @@ $("#finish").addEventListener("click",()=>{
 });
 $("#back").addEventListener("click",()=>{ tick=setInterval(refresh,1000); show("#s-live"); });
 $("#wipe").addEventListener("click",()=>{
-  if(!confirm("Effacer le relevé de cet appareil ? À faire une fois que le professeur l'a scanné.")) return;
-  localStorage.removeItem(K); localStorage.removeItem("pv.obs.sess"); live=null; S=null;
+  if(!confirm("Effacer le relevé et les photos de cet appareil ? À faire une fois que le professeur a scanné le relevé.")) return;
+  localStorage.removeItem(K); localStorage.removeItem("pv.obs.sess"); localStorage.removeItem(K_P);
+  live=null; S=null; pack=null;
   $("#scan-go").textContent="Activer la caméra";
   show("#s-home");
 });

@@ -7,5 +7,12 @@
 *.csv
 *.tsv
 
+# Trombinoscopes et photos d'élèves : ne doivent jamais entrer dans le dépôt
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.webp
+
 .DS_Store
 node_modules/

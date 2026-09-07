@@ -84,13 +84,28 @@ sont remplacés à la construction.
 - **Le `localStorage` est cloisonné par origine**, pas par dossier. Ce site doit vivre sur une
   origine qui lui est propre.
 - **Changer d'URL fait perdre les données.** Exporter une sauvegarde avant toute migration.
+- **Les photos passent par une planche unique, pas par 21 fichiers.** Un seul JPEG en
+  grille de sept colonnes, cellules de 48×64, découpé à l'affichage avec
+  `background-position`. Vingt et une images séparées pèsent 19,8 Ko contre 13,3 Ko pour la
+  planche : l'écart, ce sont vingt en-têtes JPEG en trop.
+- **Fragments de 900 caractères.** C'est ce qui maintient chaque QR en version 22, soit
+  105 modules — la densité qui se lit de façon fiable d'un iPad à l'autre. Un QR version 40
+  diviserait le nombre de fragments par trois mais devient capricieux à la lecture, et un
+  transfert raté coûte plus cher en classe que trois secondes de défilé.
+- **L'empreinte de la planche est vérifiée à l'arrivée.** Sans elle, un fragment abîmé donne
+  une image tronquée sans que personne s'en aperçoive.
+- **Les photos ne quittent jamais l'appareil du professeur autrement que par QR.** Elles
+  vivent dans `classes[cls].photos`, partent donc dans les sauvegardes, et sont effacées de
+  l'iPad de l'élève par « Effacer et quitter » en fin de séance.
 
 ## Formats des charges QR
 
 - Séance, du professeur vers l'observateur :
-  `PVS2|jeton|poste|classe|date|plafond|barème|noms`
+  `PVS3|jeton|poste|classe|date|plafond|barème|planche|noms`
 - Relevé, de l'observateur vers le professeur :
   `PVR2|jeton|départ|évènements|absents`
+- Planche de photos, du professeur vers l'observateur, en fragments :
+  `PVP1|planche|index|total|données base64`
 
 Toute modification de ces formats casse la compatibilité entre les deux pages : incrémenter le
 numéro de version et adapter les deux côtés dans le même commit.
@@ -102,7 +117,8 @@ numéro de version et adapter les deux côtés dans le même commit.
    sont en clair. C'est le point le plus important.
 2. **Notion de période** — l'objectif est dit « de période » mais le suivi cumule toute
    l'année. Il faut des bornes : remise à zéro des points, report du compteur de rôles.
-3. **Purge automatique** du relevé sur l'iPad de l'élève après transmission.
+3. **Purge automatique** du relevé sur l'iPad de l'élève après transmission. Les photos, elles,
+   partent déjà avec « Effacer et quitter ».
 4. **Verrouillage automatique** de la page professeur après quelques minutes d'inactivité.
 5. **Fusion d'élève** quand l'orthographe d'un nom déjà enregistré est corrigée : son historique
    se détache aujourd'hui.

@@ -18,12 +18,18 @@ if(!classes){
 }
 let history = load(K_H, []);
 let sess = load(K_S, null);
-let merged=null, scanner=null, curPoste="A", arb={};
+let merged=null, scanner=null, curPoste="A", arb={}, adj={}, sumOrder=null;
 let draft=null, grid=null, gridInfo=null, editing=null, drawGen=0;
 
 const clsNames = () => Object.keys(classes);
 const cfgOf = c => (classes[c] && classes[c].cfg) || defaultCfg("formatif");
 const namesOf = c => (classes[c] && classes[c].names) || [];
+const photosOf = c => (classes[c] && classes[c].photos) || {};
+/* Vignette d'élève. Absente = case hachurée, pour que les colonnes restent alignées. */
+function avatar(c, n, gr){
+  const p = photosOf(c)[n], k = "ava" + (gr ? " gr" : "");
+  return p ? `<img class="${k}" src="${esc(p)}" alt="">` : `<span class="${k} vide"></span>`;
+}
 
 /* ============ Onglets ============ */
 $$(".tabs button").forEach(b=>b.addEventListener("click",()=>{
@@ -250,7 +256,8 @@ function openCfg(c){
   $("#cfg-solo").value=cfgWork.solo; $("#cfg-absent").value=cfgWork.absent;
   $("#cfg-tirage").value=cfgWork.tirage||"equite";
   $("#cfg-resti").value=cfgWork.resti; $("#cfg-obj").value=cfgWork.objectif;
-  paintTypes(); toggleObj();
+  paintTypes(); toggleObj(); photoState();
+  $("#cfg-photo-err").textContent="";
   cstep("#c-cfg");
 }
 function toggleObj(){ $("#cfg-obj-wrap").style.display = $("#cfg-resti").value==="none" ? "none" : "block"; }
@@ -288,6 +295,61 @@ $("#cfg-save").addEventListener("click",()=>{
   classes[cfgCls].cfg = cfgWork;
   save(K_C,classes); fillClassSelects(); cstep("#c-list");
 });
+/* ============ Photos de la classe ============
+   Elles vivent dans classes[cls].photos, donc elles partent dans la sauvegarde
+   et en reviennent. Elles ne sont jamais encodées dans un QR : trop volumineuses,
+   et aucune photo d'élève n'a à transiter vers l'iPad d'un autre élève. */
+const PHOTO_FMT = "participation-photos-v1";
+function photoState(){
+  const ph = photosOf(cfgCls), noms = namesOf(cfgCls), n = Object.keys(ph).length;
+  if(!n){ $("#cfg-photo-etat").textContent = "Aucune photo pour cette classe."; return; }
+  const avec = noms.filter(x=>ph[x]).length;
+  const orph = Object.keys(ph).filter(x=>!noms.includes(x));
+  $("#cfg-photo-etat").innerHTML =
+    `<strong>${avec} élève${avec>1?"s":""} sur ${noms.length}</strong> avec photo.` +
+    (avec<noms.length ? `<br>${noms.length-avec} sans photo.` : "") +
+    (orph.length ? `<br>${orph.length} photo${orph.length>1?"s":""} non rattachée${orph.length>1?"s":""} : ${orph.map(esc).join(", ")}.` : "");
+}
+$("#cfg-photo-file").addEventListener("change", async e=>{
+  const f = e.target.files[0]; if(!f) return;
+  $("#cfg-photo-err").textContent = "";
+  try{
+    const d = JSON.parse(await f.text());
+    if(d.format !== PHOTO_FMT || !d.photos) throw new Error("Ce fichier n'est pas un fichier photos de cette application.");
+    const noms = namesOf(cfgCls), ph = {};
+    let pris = 0;
+    Object.keys(d.photos).forEach(k=>{
+      const v = d.photos[k];
+      // on n'accepte que des images en ligne : jamais une URL distante ni un javascript:
+      if(typeof v !== "string" || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v)) return;
+      ph[k] = v; if(noms.includes(k)) pris++;
+    });
+    if(!pris) throw new Error(`Aucun nom de ce fichier ne correspond aux élèves de « ${cfgCls} ».`);
+    const avant = classes[cfgCls].photos;
+    classes[cfgCls].photos = ph;
+    if(!save(K_C, classes)){
+      if(avant) classes[cfgCls].photos = avant; else delete classes[cfgCls].photos;
+      throw new Error("Stockage saturé : les photos n'ont pas pu être enregistrées.");
+    }
+    photoState(); paintClassList();
+  }catch(err){ $("#cfg-photo-err").textContent = err.message || "Fichier illisible."; }
+  e.target.value = "";
+});
+$("#cfg-photo-exp").addEventListener("click",()=>{
+  const ph = photosOf(cfgCls);
+  if(!Object.keys(ph).length){ $("#cfg-photo-err").textContent = "Aucune photo à exporter."; return; }
+  const txt = JSON.stringify({format:PHOTO_FMT, classe:cfgCls, cree:new Date().toISOString(), photos:ph});
+  const url = URL.createObjectURL(new Blob([txt],{type:"application/json"}));
+  const a = document.createElement("a"); a.href = url;
+  a.download = `participation-photos-${cfgCls.replace(/[^\p{L}\p{N}]+/gu,"-")}-${today()}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 3000);
+});
+$("#cfg-photo-del").addEventListener("click",()=>{
+  if(!Object.keys(photosOf(cfgCls)).length) return;
+  if(!confirm(`Retirer les photos de « ${cfgCls} » ? Le fichier photos exporté permet de les remettre.`)) return;
+  delete classes[cfgCls].photos; save(K_C, classes); photoState(); paintClassList();
+});
+
 $("#cfg-back").addEventListener("click",()=>cstep("#c-list"));
 $("#cfg-del").addEventListener("click",()=>{
   const nb=history.filter(h=>h.cls===cfgCls).length;
@@ -298,25 +360,92 @@ $("#cfg-del").addEventListener("click",()=>{
 });
 
 /* ============ Séance ============ */
-$("#open").addEventListener("click",()=>{
+/* Planche de photos : une seule image JPEG, cellules de 48x64, sept par ligne,
+   dans l'ordre exact de la liste. L'observateur n'a besoin que de l'indice. */
+const CELL_W = 48, CELL_H = 64, CELL_COLS = 7;
+function buildSheet(cls, names){
+  const ph = photosOf(cls);
+  if(!names.some(n=>ph[n])) return Promise.resolve(null);
+  const rows = Math.ceil(names.length / CELL_COLS);
+  const cv = document.createElement("canvas");
+  cv.width = CELL_COLS*CELL_W; cv.height = rows*CELL_H;
+  const cx = cv.getContext("2d");
+  cx.fillStyle = "#fff"; cx.fillRect(0,0,cv.width,cv.height);
+  return Promise.all(names.map((n,i)=>new Promise(res=>{
+    const src = ph[n]; if(!src) return res();
+    const im = new Image();
+    im.onload = ()=>{ cx.drawImage(im, (i%CELL_COLS)*CELL_W, Math.floor(i/CELL_COLS)*CELL_H, CELL_W, CELL_H); res(); };
+    im.onerror = res;
+    im.src = src;
+  }))).then(()=>cv.toDataURL("image/jpeg", 0.55));
+}
+$("#open").addEventListener("click", async ()=>{
   const cls=$("#cls").value;
   if($("#obsA").value===$("#obsB").value){ alert("Les deux observateurs doivent être deux élèves différents."); return; }
   const cfg=cfgOf(cls);
+  const btn=$("#open"); btn.disabled=true; btn.textContent="Préparation…";
+  let sheet=null;
+  try{ sheet = await buildSheet(cls, namesOf(cls)); }catch(e){ sheet=null; }
+  btn.disabled=false; btn.textContent="Ouvrir la séance";
   sess={cls, date:today(), names:namesOf(cls).slice(), cap:cfg.cap, types:cfg.types.map(t=>({...t})),
+        sheet, pack: sheet ? hash36(sheet) : "",
         A:{token:token6(), obs:$("#obsA").value, rep:null},
         B:{token:token6(), obs:$("#obsB").value, rep:null}};
-  save(K_S,sess); showCodes();
+  if(!save(K_S,sess)){ alert("Stockage saturé : la séance n'a pas pu être ouverte."); return; }
+  showCodes();
 });
 function payloadFor(p){
   return encSession({token:sess[p].token, poste:p, cls:sess.cls, date:sess.date,
-                     cap:sess.cap, types:sess.types, names:sess.names});
+                     cap:sess.cap, types:sess.types, pack:sess.pack, names:sess.names});
 }
+
+/* ---- Émission de la planche : les fragments défilent en boucle, les deux
+   observateurs visent l'écran en même temps et les ramassent au passage. ---- */
+let psendTimer=null;
+function openPhotoSend(){
+  if(!sess || !sess.sheet) return;
+  const b64 = sess.sheet.slice(sess.sheet.indexOf(",")+1);
+  const txts = encPhotoFrames(sess.pack, b64);
+  $("#psend-lbl").textContent = `Photos de ${sess.cls}`;
+  $("#psend-info").textContent = `Préparation des ${txts.length} fragments…`;
+  $("#psend-qr").innerHTML = "";
+  $("#psend").classList.add("on");
+  setTimeout(()=>{
+    let type = 0;                       // même version pour tous : longueur identique
+    for(let t=4; t<=40 && !type; t++){
+      try{ const q=qrcode(t,"L"); q.addData(txts[0]); q.make(); type=t; }catch(e){}
+    }
+    if(!type){ $("#psend-info").textContent = "Fragment trop volumineux pour un QR code."; return; }
+    const svgs = txts.map(t=>{
+      const q=qrcode(type,"L"); q.addData(t); q.make();
+      const cell=Math.max(2, Math.floor(520/q.getModuleCount()));
+      return q.createSvgTag({cellSize:cell, margin:cell*2, scalable:false});
+    });
+    let k=0;
+    const tick=()=>{
+      $("#psend-qr").innerHTML = svgs[k];
+      const svg=$("#psend-qr").querySelector("svg");
+      if(svg){ svg.style.width="100%"; svg.style.height="auto"; svg.style.display="block"; }
+      $("#psend-info").textContent =
+        `Fragment ${k+1} sur ${svgs.length} · les deux observateurs visent l'écran jusqu'à ce que leur barre soit pleine`;
+      k=(k+1)%svgs.length;
+    };
+    tick(); psendTimer=setInterval(tick, 250);
+  }, 30);
+}
+function closePhotoSend(){
+  clearInterval(psendTimer); psendTimer=null;
+  $("#psend-qr").innerHTML="";
+  $("#psend").classList.remove("on");
+}
+$("#send-photos").addEventListener("click", openPhotoSend);
+$("#psend-close").addEventListener("click", closePhotoSend);
 function showCodes(){
   $("#codes-sub").textContent=`${sess.cls} · ${frDate(sess.date)}`;
   const cnt=roleCounts(sess.cls);
   $("#duo").innerHTML=["A","B"].map(p=>`
     <div class="one">
-      <div class="hd"><span class="poste">Poste ${p}</span>
+      <div class="hd">${avatar(sess.cls,sess[p].obs)}<span class="poste">Poste ${p}</span>
         <span class="nmx">${esc(sess[p].obs)}</span></div>
       <div class="qrbox" id="qr-${p}"></div>
       <p class="sub" style="margin:6px 0 0;font-size:13px">${(cnt[sess[p].obs]||0)} passage${(cnt[sess[p].obs]||0)>1?"s":""} avant aujourd'hui</p>
@@ -331,6 +460,7 @@ function showCodes(){
       $("#zoom").classList.add("on");
     });
   });
+  $("#send-photos").style.display = sess.pack ? "block" : "none";
   step("#step-codes");
 }
 $("#zoom-close").addEventListener("click",()=>$("#zoom").classList.remove("on"));
@@ -345,7 +475,7 @@ $("#cancel-sess").addEventListener("click",()=>{
   if(!confirm("Annuler cette séance ?")) return;
   sess=null; localStorage.removeItem(K_S); step("#step-start");
 });
-$("#to-recv").addEventListener("click", showRecv);
+$("#to-recv").addEventListener("click", ()=>{ closePhotoSend(); showRecv(); });
 $("#back-codes").addEventListener("click",()=>{ if(scanner) scanner.stop(); showCodes(); });
 
 function showRecv(){ refreshRecv(); step("#step-recv"); }
@@ -371,6 +501,89 @@ scanner=makeScanner($("#vid"),$("#cnv"),t=>{
 }, m=>{ $("#recv-err").textContent=m; });
 $("#scan-go").addEventListener("click",()=>{ $("#recv-err").textContent=""; scanner.start(); $("#scan-go").textContent="Recherche du QR code…"; });
 $("#paste-go").addEventListener("click",()=>{ if(takeReport($("#paste-r").value)) $("#paste-r").value=""; });
+
+/* ============ Roue de vérification des prises de notes ============
+   Jamais à l'ouverture : elle sert après la réception des relevés, pour aller
+   voir un cahier. Les deux observateurs et les absents sont hors du tirage —
+   les premiers ont déjà travaillé, les seconds ne sont pas là. */
+let wheelRot = 0, wheelTimer = null;
+function verifCounts(c){ return (classes[c] && classes[c].verif) || {}; }
+function wheelCandidates(){
+  const obs = [sess.A.obs, sess.B.obs], abs = new Set();
+  ["A","B"].forEach(p=>{ if(sess[p].rep) (sess[p].rep.abs||[]).forEach(i=>abs.add(i)); });
+  return sess.names.map((n,i)=>({n,i})).filter(o=>!obs.includes(o.n) && !abs.has(o.i));
+}
+/* Comme pour les observateurs : celui qu'on a le moins vérifié passe devant. */
+function pickVerif(cands){
+  const v = verifCounts(sess.cls);
+  const w = cands.map(o=>Math.pow(1/(1+(v[o.n]||0)), 3));
+  const tot = w.reduce((a,b)=>a+b,0);
+  let r = Math.random()*tot, i = 0;
+  for(; i<cands.length; i++){ r -= w[i]; if(r<=0) break; }
+  return Math.min(i, cands.length-1);
+}
+function wheelSvg(cands){
+  const N = cands.length, R = 150, cx = 160, cy = 160;
+  const teintes = ["#D6E8E6","#EFF3F3","#C8DEDB","#F7FAFA"];
+  const petit = N > 15;
+  let out = `<svg viewBox="0 0 320 320" style="width:100%;height:auto;display:block">`;
+  cands.forEach((o,k)=>{
+    const a0 = (k/N)*2*Math.PI - Math.PI/2, a1 = ((k+1)/N)*2*Math.PI - Math.PI/2;
+    const x0 = cx+R*Math.cos(a0), y0 = cy+R*Math.sin(a0);
+    const x1 = cx+R*Math.cos(a1), y1 = cy+R*Math.sin(a1);
+    const grand = (a1-a0) > Math.PI ? 1 : 0;
+    out += `<path d="M${cx},${cy} L${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 ${grand},1 ${x1.toFixed(1)},${y1.toFixed(1)} Z" fill="${teintes[k%4]}" stroke="#fff" stroke-width="1.5"/>`;
+    const am = (a0+a1)/2, tr = R*0.63;
+    const tx = cx+tr*Math.cos(am), ty = cy+tr*Math.sin(am);
+    out += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" transform="rotate(${(am*180/Math.PI).toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)})" font-size="${petit?9.5:12}" font-weight="600" fill="#15242B" text-anchor="middle" dominant-baseline="middle">${esc(o.n)}</text>`;
+  });
+  out += `<circle cx="${cx}" cy="${cy}" r="15" fill="#fff" stroke="#C7D1D4" stroke-width="1.5"/></svg>`;
+  return out;
+}
+function openWheel(){
+  if(!sess) return;
+  const cands = wheelCandidates();
+  if(!cands.length){ alert("Personne à vérifier : tous les élèves sont observateurs ou absents."); return; }
+  wheelRot = 0;
+  $("#wheel-disc").className = "disc";
+  $("#wheel-disc").style.transform = "rotate(0deg)";
+  $("#wheel-disc").innerHTML = wheelSvg(cands);
+  $("#wheel-res").innerHTML = `<p class="sub" style="margin:0">${cands.length} élève${cands.length>1?"s":""} dans la roue · observateurs et absents écartés</p>`;
+  $("#wheel-go").disabled = false;
+  $("#wheel-go").textContent = "Tourner";
+  $("#wheel").classList.add("on");
+}
+function spinWheel(){
+  const cands = wheelCandidates();
+  if(!cands.length) return;
+  const k = pickVerif(cands);                 // décidé avant de tourner
+  const N = cands.length;
+  const disc = $("#wheel-disc");
+  const doux = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches);
+  $("#wheel-go").disabled = true;
+  $("#wheel-go").textContent = "…";
+  $("#wheel-res").innerHTML = "";
+  wheelRot += (doux ? 360*4 : 0) + (360 - ((wheelRot + (k+0.5)*360/N) % 360));
+  disc.className = "disc" + (doux ? " tourne" : "");
+  disc.style.transform = `rotate(${wheelRot}deg)`;
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(()=>revealWheel(cands[k].n), doux ? 3500 : 0);
+}
+function revealWheel(nom){
+  const v = verifCounts(sess.cls), deja = v[nom] || 0;
+  $("#wheel-res").innerHTML =
+    `${avatar(sess.cls, nom, true)}<div class="qui">${esc(nom)}</div>` +
+    `<p class="sub" style="margin:0;font-size:14px">${deja ? `déjà vérifié ${deja} fois cette année` : "jamais vérifié cette année"}</p>`;
+  if(!classes[sess.cls].verif) classes[sess.cls].verif = {};
+  classes[sess.cls].verif[nom] = deja + 1;
+  save(K_C, classes);
+  $("#wheel-go").disabled = false;
+  $("#wheel-go").textContent = "Tourner à nouveau";
+}
+function closeWheel(){ clearTimeout(wheelTimer); $("#wheel").classList.remove("on"); }
+["#wheel-open","#wheel-open2"].forEach(id=>$(id).addEventListener("click", openWheel));
+$("#wheel-go").addEventListener("click", spinWheel);
+$("#wheel-close").addEventListener("click", closeWheel);
 
 /* ============ Fusion ============ */
 function mergeSession(){
@@ -399,7 +612,7 @@ function mergeSession(){
 }
 $("#to-sum").addEventListener("click",()=>{
   if(scanner) scanner.stop();
-  merged=mergeSession(); arb={};
+  merged=mergeSession(); arb={}; adj={}; sumOrder=null;
   $("#keep").value=cfgOf(sess.cls).solo;
   paintSummary(); step("#step-sum");
 });
@@ -417,9 +630,14 @@ function soloPart(i, mode){
 function retained(mode){
   const cr=creditFor(), obs=[sess.A.obs, sess.B.obs];
   return sess.names.map((n,i)=>{
-    if(obs.includes(n)) return cr;
-    const base = merged.conf[i] + soloPart(i, mode);
-    return sess.cap ? Math.min(base, sess.cap) : base;
+    let base;
+    if(obs.includes(n)) base = cr;
+    else {
+      const brut = merged.conf[i] + soloPart(i, mode);
+      base = sess.cap ? Math.min(brut, sess.cap) : brut;
+    }
+    // la correction manuelle passe apres le plafond : c'est un choix du professeur
+    return Math.max(0, base + (adj[i]||0));
   });
 }
 /* Écart marqué : un observateur a vu nettement plus que l'autre sur cet élève. */
@@ -472,16 +690,31 @@ function paintSummary(){
 function drawSumTable(){
   const mode=$("#keep").value, ret=retained(mode), absSet=new Set(merged.abs);
   const obs=[sess.A.obs,sess.B.obs];
-  const rows=sess.names.map((n,i)=>({n,i,c:merged.conf[i],s:merged.solo[i],r:ret[i],
-                                     k:merged.cConf[i]+merged.cSolo[i], a:absSet.has(i), o:obs.includes(n), d:arb[i]||''}))
-    .sort((a,b)=>b.r-a.r||a.n.localeCompare(b.n,"fr"));
+  // l'ordre est fige a l'entree : sinon les lignes sautent sous le doigt
+  if(!sumOrder) sumOrder = sess.names.map((n,i)=>i)
+    .sort((a,b)=>ret[b]-ret[a] || sess.names[a].localeCompare(sess.names[b],"fr"));
+  const rows = sumOrder.map(i=>({n:sess.names[i], i, c:merged.conf[i], s:merged.solo[i], r:ret[i],
+                                 k:merged.cConf[i]+merged.cSolo[i], a:absSet.has(i),
+                                 o:obs.includes(sess.names[i]), d:arb[i]||'', j:adj[i]||0}));
   $("#sum-tbl").innerHTML=
-    `<div class="r head"><span class="nm">Élève</span><span class="n">Conf.</span><span class="n">Isolés</span><span class="n">Retenu</span></div>`+
-    rows.map(o=>`<div class="r${o.k||o.o?"":" none"}">
-      <span class="nm">${esc(o.n)}${o.o?' <span class="pill ok">obs.</span>':""}${o.a?' <span class="pill solo">abs.</span>':""}${o.d==="drop"?' <span class="pill solo">isolés écartés</span>':o.d==="keep"?' <span class="pill ok">arbitré</span>':""}</span>
+    `<div class="r head"><span class="nm">Élève</span><span class="n">Conf.</span><span class="n">Isolés</span><span class="n" style="width:auto">Retenu</span></div>`+
+    rows.map(o=>`<div class="r${o.k||o.o||o.j?"":" none"}">
+      ${avatar(sess.cls,o.n)}
+      <span class="nm">${esc(o.n)}${o.o?' <span class="pill ok">obs.</span>':""}${o.a?' <span class="pill solo">abs.</span>':""}${o.d==="drop"?' <span class="pill solo">isolés écartés</span>':o.d==="keep"?' <span class="pill ok">arbitré</span>':""}${o.j?` <span class="pill ok">${o.j>0?"+":""}${o.j}</span>`:""}</span>
       <span class="n ${o.c?"":"dim"}">${o.o?"—":o.c}</span>
       <span class="n ${o.s?"":"dim"}">${o.o?"—":o.s}</span>
-      <span class="n ${o.r?"hi":"dim"}">${o.a?"—":o.r}</span></div>`).join("");
+      <span class="ctrl">
+        <button class="adj" data-moins="${o.i}" ${o.a?"disabled":""}>−</button>
+        <span class="v" style="color:${o.r?"var(--teal)":"inherit"}">${o.a?"—":o.r}</span>
+        <button class="adj" data-plus="${o.i}" ${o.a?"disabled":""}>+</button>
+      </span></div>`).join("");
+  $$("#sum-tbl .adj").forEach(b=>b.addEventListener("click",()=>{
+    const plus = b.dataset.plus !== undefined;
+    const i = +(plus ? b.dataset.plus : b.dataset.moins);
+    adj[i] = (adj[i]||0) + (plus ? 1 : -1);
+    if(!adj[i]) delete adj[i];
+    drawSumTable();
+  }));
 }
 $("#keep").addEventListener("change", ()=>{ paintArb(); drawSumTable(); });
 
@@ -489,7 +722,7 @@ $("#validate").addEventListener("click",()=>{
   const mode=$("#keep").value, ret=retained(mode);
   history.push({cls:sess.cls, date:sess.date, mode, obsA:sess.A.obs, obsB:sess.B.obs,
                 conv:merged.conv, names:sess.names.slice(), pts:ret,
-                conf:merged.conf, solo:merged.solo, abs:merged.abs, arb:{...arb}});
+                conf:merged.conf, solo:merged.solo, abs:merged.abs, arb:{...arb}, adj:{...adj}});
   if(!save(K_H,history)){ alert("Enregistrement impossible : stockage saturé."); return; }
   sess=null; localStorage.removeItem(K_S); merged=null;
   step("#step-start"); fillClassSelects();
@@ -542,17 +775,83 @@ function paintAnnual(){
   $("#annual").innerHTML=
     `<div class="r head"><span class="nm">Élève</span><span class="n">Rôles</span><span class="n">Points</span>${showR?'<span class="n">Bilan</span>':""}</div>`+
     rows.map(o=>`<div class="r${o.p?"":" none"}">
+      ${avatar(c,o.n)}
       <span class="nm">${esc(o.n)}${o.miss>0?` <span class="pill">${o.miss} abs.</span>`:""}</span>
       <span class="n ${o.r?"":"dim"}">${o.r}</span>
       <span class="n ${o.p?"hi":"dim"}">${o.p}</span>
       ${showR?`<span class="n" style="width:auto;min-width:70px">${esc(o.x.v)}${o.x.u}</span>`:""}</div>`).join("");
 
+  paintSeances(c);
   const last=load(K_B,null), days=last?Math.floor((Date.now()-last)/86400000):null;
   $("#backup-warn").innerHTML = !history.length ? ""
     : (days===null||days>=14)
       ? `<div class="warnbox"><strong>Sauvegarde ${days===null?"jamais faite":"vieille de "+days+" jours"}.</strong> Exportez maintenant : sept jours sans ouvrir cette page suffisent à effacer les données.</div>`
       : `<p class="sub" style="font-size:14px">Dernière sauvegarde il y a ${days} jour${days>1?"s":""}.</p>`;
 }
+/* ---- Reprise d'une seance deja enregistree ----
+   On corrige les points retenus, jamais le releve des observateurs : conf et
+   solo restent intacts, l'ecart est isole dans adj et reste donc reversible. */
+let corrH = null, corrPts = null;
+function paintSeances(c){
+  const hs = history.map((h,k)=>({h,k})).filter(o=>o.h.cls===c).reverse();
+  $("#seances").innerHTML = hs.length
+    ? hs.map(o=>`<div class="r">
+        <span class="nm">${frDate(o.h.date)}<br><span class="sub" style="font-size:13px">${esc(o.h.obsA)} et ${esc(o.h.obsB)}${o.h.conv!=null?` · ${o.h.conv}%`:""}</span></span>
+        <button class="pill ok" data-corr="${o.k}" style="padding:8px 12px">Corriger</button>
+      </div>`).join("")
+    : `<div class="r none"><span class="nm">Aucune séance enregistrée.</span></div>`;
+  $$("#seances button[data-corr]").forEach(b=>b.addEventListener("click",()=>openCorr(+b.dataset.corr)));
+}
+function openCorr(k){
+  corrH = k; corrPts = history[k].pts.slice();
+  const h = history[k];
+  $("#corr-h").textContent = `Séance du ${frDate(h.date)}`;
+  $("#corr-sub").textContent = `${h.cls} · postes tenus par ${h.obsA} et ${h.obsB}`;
+  drawCorr();
+  $("#corr").classList.add("on"); window.scrollTo(0,0);
+}
+function drawCorr(){
+  const h = history[corrH], absSet = new Set(h.abs||[]);
+  $("#corr-tbl").innerHTML =
+    `<div class="r head"><span class="nm">Élève</span><span class="n">Relevé</span><span class="n" style="width:auto">Retenu</span></div>`+
+    h.names.map((n,i)=>{
+      const brut = (h.pts[i]||0) - ((h.adj&&h.adj[i])||0);
+      const ecart = corrPts[i] - brut;
+      return `<div class="r">
+        ${avatar(h.cls,n)}
+        <span class="nm">${esc(n)}${absSet.has(i)?' <span class="pill solo">abs.</span>':""}${ecart?` <span class="pill ok">${ecart>0?"+":""}${ecart}</span>`:""}</span>
+        <span class="n dim">${brut}</span>
+        <span class="ctrl">
+          <button class="adj" data-cm="${i}">−</button>
+          <span class="v" style="color:${corrPts[i]?"var(--teal)":"inherit"}">${corrPts[i]}</span>
+          <button class="adj" data-cp="${i}">+</button>
+        </span></div>`;
+    }).join("");
+  $$("#corr-tbl .adj").forEach(b=>b.addEventListener("click",()=>{
+    const plus = b.dataset.cp !== undefined;
+    const i = +(plus ? b.dataset.cp : b.dataset.cm);
+    corrPts[i] = Math.max(0, corrPts[i] + (plus ? 1 : -1));
+    drawCorr();
+  }));
+}
+$("#corr-save").addEventListener("click",()=>{
+  const h = history[corrH], a = {};
+  h.names.forEach((n,i)=>{
+    const brut = (h.pts[i]||0) - ((h.adj&&h.adj[i])||0);   // releve d'origine, hors corrections
+    const d = corrPts[i] - brut;
+    if(d) a[i] = d;
+  });
+  const avantPts = h.pts, avantAdj = h.adj;
+  h.adj = a; h.pts = corrPts.slice();
+  if(!save(K_H,history)){
+    h.pts = avantPts; h.adj = avantAdj;
+    alert("Enregistrement impossible : stockage saturé."); return;
+  }
+  $("#corr").classList.remove("on");
+  paintAnnual();
+});
+$("#corr-close").addEventListener("click",()=>$("#corr").classList.remove("on"));
+
 $("#cls2").addEventListener("change", paintAnnual);
 
 $("#export").addEventListener("click",()=>{

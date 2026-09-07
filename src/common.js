@@ -31,17 +31,45 @@ function defaultCfg(modele){
 const b36 = n => Math.max(0,Math.round(n)).toString(36);
 const p36 = s => parseInt(s,36)||0;
 
-/* --- QR de séance : jeton + poste + classe + date + liste --- */
+/* --- QR de séance : jeton + poste + classe + date + planche + liste --- */
 function encSession(s){
   const ty = s.types.map(t=>[t.w, t.l, t.d||""].join("*")).join("~");
-  return ["PVS2", s.token, s.poste, s.cls, s.date, s.cap||0, ty, s.names.join("~")].join("|");
+  return ["PVS3", s.token, s.poste, s.cls, s.date, s.cap||0, ty, s.pack||"", s.names.join("~")].join("|");
 }
 function decSession(txt){
   const p = String(txt||"").trim().split("|");
-  if(p[0]!=="PVS2" || p.length<8) throw new Error("Ce code n'est pas un code de séance valide.");
+  if(p[0]==="PVS2") throw new Error("Ce code vient d'une version plus ancienne de l'application professeur.");
+  if(p[0]!=="PVS3" || p.length<9) throw new Error("Ce code n'est pas un code de séance valide.");
   return {token:p[1], poste:p[2], cls:p[3], date:p[4], cap:+p[5]||0,
           types:p[6].split("~").filter(Boolean).map(x=>{const a=x.split("*");return {w:+a[0],l:a[1],d:a[2]||""}}),
-          names:p.slice(7).join("|").split("~").filter(Boolean)};
+          pack:p[7]||"",
+          names:p.slice(8).join("|").split("~").filter(Boolean)};
+}
+
+/* --- Planche de photos, découpée en fragments QR ---
+   Une seule image JPEG pour toute la classe : un en-tête au lieu de vingt et un.
+   900 caractères par fragment maintient chaque QR en version 22 (105 modules),
+   la densité qui se lit déjà correctement d'un iPad à l'autre. */
+const PHOTO_CHUNK = 900;
+function encPhotoFrames(pack, b64){
+  const n = Math.ceil(b64.length / PHOTO_CHUNK), out = [];
+  for(let i=0; i<n; i++)
+    out.push(["PVP1", pack, i+1, n, b64.substr(i*PHOTO_CHUNK, PHOTO_CHUNK)].join("|"));
+  return out;
+}
+function decPhotoFrame(txt){
+  const p = String(txt||"").trim().split("|");
+  if(p[0]!=="PVP1" || p.length<5) return null;
+  const i = +p[2], n = +p[3];
+  if(!(i>=1 && n>=1 && i<=n)) return null;
+  return {pack:p[1], i, n, data:p.slice(4).join("|")};
+}
+/* Empreinte courte d'une planche : permet à l'observateur de savoir s'il a
+   déjà la bonne, et d'ignorer un fragment venu d'une autre classe. */
+function hash36(s){
+  let h = 2166136261 >>> 0;
+  for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h.toString(36).toUpperCase().padStart(6,"0").slice(-6);
 }
 
 /* --- QR de relevé : jeton + départ + évènements --- */
@@ -94,7 +122,8 @@ function drawQR(el, text, px){
 }
 
 /* --- Lecteur QR via caméra --- */
-function makeScanner(video, canvas, onFound, onError){
+function makeScanner(video, canvas, onFound, onError, opts){
+  const continu = !!(opts && opts.continu);   // ramasser plusieurs codes sans s'arrêter
   let stream=null, raf=null, running=false;
   const ctx = canvas.getContext("2d",{willReadFrequently:true});
   async function start(){
@@ -120,7 +149,10 @@ function makeScanner(video, canvas, onFound, onError){
         ctx.drawImage(video,0,0,w,h);
         const img = ctx.getImageData(0,0,w,h);
         const res = jsQR(img.data, w, h, {inversionAttempts:"dontInvert"});
-        if(res && res.data){ stop(); onFound(res.data); return; }
+        if(res && res.data){
+          if(continu){ onFound(res.data); }
+          else { stop(); onFound(res.data); return; }
+        }
       }
     }
     raf = requestAnimationFrame(loop);
