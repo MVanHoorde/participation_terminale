@@ -66,7 +66,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
 .gauge{height:9px;border-radius:6px;background:var(--line);overflow:hidden;margin:8px 0 4px}
 .gauge i{display:block;height:100%;background:var(--teal);transition:width .2s ease}
 
-/* Photos d'élèves : côté professeur uniquement, jamais transmises par QR */
+/* Vignettes d'élèves côté professeur ; l'observateur reçoit une planche découpée */
 .ava{width:32px;height:43px;border-radius:6px;object-fit:cover;background:var(--canvas);
      border:1px solid var(--line);flex:none;display:block}
 .ava.vide{background:repeating-linear-gradient(45deg,#fff,#fff 5px,#EEF2F3 5px,#EEF2F3 10px)}
@@ -114,6 +114,17 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
 #wheel-res{text-align:center;min-height:150px;display:flex;flex-direction:column;align-items:center;gap:8px}
 #wheel-res .qui{font-size:24px;font-weight:700;letter-spacing:-.02em}
 #wheel-res .ava{margin:0 auto}
+#wheel-fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+.tabs button.roue{flex:none;padding:9px 14px;color:var(--teal);background:var(--tealbg)}
+
+/* Photos : une vignette par élève, qu'on touche pour la remplacer */
+.phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin:0 0 14px}
+.phgrid button{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 3px;
+  border:1.5px solid var(--line);border-radius:10px;font-size:12px;line-height:1.15;min-width:0}
+.phgrid button:active{background:var(--tealbg);border-color:var(--teal)}
+.phgrid .ava{width:48px;height:64px}
+.phgrid .nmp{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cache{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 </style>
 </head>
 <body>
@@ -122,6 +133,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
   <button data-t="#t-seance" class="on">Séance</button>
   <button data-t="#t-suivi">Suivi</button>
   <button data-t="#t-classes">Classes</button>
+  <button id="wheel-nav" class="roue" title="Vérifier une prise de notes">Roue</button>
 </nav>
 
 <!-- ================= SÉANCE ================= -->
@@ -163,6 +175,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
         </div>
       </details>
       <button class="btn btn-teal" id="send-photos" style="display:none">Envoyer les photos aux observateurs</button>
+      <p class="sub" id="no-photos" style="display:none;font-size:14px">Aucune photo pour cette classe au moment de l'ouverture : les observateurs verront seulement les noms. Les photos s'ajoutent dans l'onglet Classes, avant d'ouvrir la séance.</p>
       <button class="btn" id="to-recv">Passer à la réception</button>
       <button class="btn btn-ghost" id="redraw">Retirer au sort</button>
       <button class="btn btn-ghost" id="cancel-sess">Annuler la séance</button>
@@ -181,7 +194,6 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
         <textarea id="paste-r" placeholder="Coller le relevé" spellcheck="false" style="margin-top:8px"></textarea>
         <button class="btn btn-ghost" id="paste-go">Ajouter ce relevé</button>
       </details>
-      <button class="btn btn-teal" id="wheel-open">Vérifier une prise de notes</button>
       <button class="btn" id="to-sum" disabled>Voir la synthèse</button>
       <button class="btn btn-ghost" id="back-codes">Revoir les codes</button>
     </div>
@@ -202,7 +214,6 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
           <option value="half">Retenir la moitié des points isolés</option>
         </select>
       </div>
-      <button class="btn btn-ghost" id="wheel-open2">Vérifier une autre prise de notes</button>
       <button class="btn btn-teal" id="validate">Valider et enregistrer</button>
       <button class="btn btn-ghost" id="discard">Abandonner cette séance</button>
     </div>
@@ -371,15 +382,26 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
         <input type="text" id="cfg-obj" inputmode="numeric">
       </div>
       <h3 style="margin-bottom:8px">Photos des élèves</h3>
-      <p class="help">Les photos restent sur cet appareil et dans vos sauvegardes. Elles ne
-        partent jamais vers les iPads des observateurs : un QR code ne peut pas les porter.</p>
+      <p class="help">Touchez un élève pour choisir sa photo, dans la photothèque ou avec
+        l'appareil photo. Pour aller plus vite, importez le trombinoscope PDF d'École Directe :
+        chaque photo est rattachée au nom écrit dessous, et vous vérifiez avant d'enregistrer.
+        Des images nommées comme les élèves (« DUPONT Marie.jpg ») marchent aussi. Les photos restent sur cet appareil et dans vos
+        sauvegardes ; à chaque séance, elles partent vers les deux observateurs par une série de
+        QR codes, et sont effacées de leur iPad en fin de séance.</p>
       <div class="card">
         <p class="sub" style="margin:0 0 10px;font-size:14.5px" id="cfg-photo-etat">—</p>
-        <label class="help" for="cfg-photo-file">Importer un fichier photos</label>
-        <input type="file" id="cfg-photo-file" accept="application/json" style="margin:6px 0 12px">
-        <button class="btn btn-ghost" id="cfg-photo-exp" style="margin:0 0 8px">Exporter le fichier photos</button>
+        <div class="phgrid" id="cfg-photo-grid"></div>
+        <input type="file" id="cfg-photo-one" accept="image/*" class="cache">
+        <label class="help" for="cfg-photo-imgs">Importer le trombinoscope École Directe (PDF), ou des images nommées comme les élèves</label>
+        <input type="file" id="cfg-photo-imgs" accept="application/pdf,.pdf,image/*" multiple style="margin:6px 0 12px">
+        <p class="err" id="cfg-photo-err" style="margin:0 0 10px"></p>
+        <details style="margin-bottom:10px">
+          <summary style="padding:6px 0;color:var(--soft);font-size:15px">Fichier photos, pour passer d'un appareil à l'autre</summary>
+          <label class="help" for="cfg-photo-file" style="display:block;margin-top:8px">Importer un fichier photos</label>
+          <input type="file" id="cfg-photo-file" accept="application/json" style="margin:6px 0 12px">
+          <button class="btn btn-ghost" id="cfg-photo-exp" style="margin:0">Exporter le fichier photos</button>
+        </details>
         <button class="btn btn-ghost" id="cfg-photo-del" style="margin:0">Retirer les photos de cette classe</button>
-        <p class="err" id="cfg-photo-err" style="margin:8px 0 0"></p>
       </div>
 
       <button class="btn btn-ghost" id="cfg-edit-list">Modifier la liste des élèves</button>
@@ -402,8 +424,23 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
   </div>
 </div>
 
+<div class="plein" id="trombi">
+  <div class="wrap">
+    <h1>Trombinoscope</h1>
+    <p class="sub" id="trombi-sub">—</p>
+    <div id="trombi-alerte"></div>
+    <div class="note">Chaque photo est rattachée à l'élève dont le nom ressemble le plus au texte lu dans le PDF, même si quelques lettres ont été mal lues. Cadre orangé : à vérifier. Cadre rouge : aucun élève trouvé. Rien n'est enregistré avant que vous validiez.</div>
+    <div class="tbl" id="trombi-tbl"></div>
+    <p class="sub" id="trombi-sans" style="font-size:14px"></p>
+    <p class="err" id="trombi-err"></p>
+    <button class="btn btn-teal" id="trombi-ok">Enregistrer ces photos</button>
+    <button class="btn btn-ghost" id="trombi-close">Annuler</button>
+  </div>
+</div>
+
 <div class="zoom" id="wheel">
-  <div class="lbl">Vérification des prises de notes</div>
+  <canvas id="wheel-fx"></canvas>
+  <div class="lbl" id="wheel-lbl">Vérification des prises de notes</div>
   <div class="wheelbox"><div class="pointer"></div><div class="disc" id="wheel-disc"></div></div>
   <div id="wheel-res"></div>
   <div class="row" style="gap:10px;max-width:380px;width:100%">
@@ -768,6 +805,393 @@ function buildNames(rows, iName, iFirst, mode){
   return out;
 }
 
+/* ===== Trombinoscope PDF d'École Directe, sans bibliothèque =====
+   Le PDF (produit par WinDev) pose chaque photo, un JPEG de 96×128, dans une
+   grille de cinq colonnes, et écrit le nom dessous : « NOM Prénom » sur une
+   ligne, ou NOM puis Prénom sur deux lignes quand c'est trop long.
+   On lit la structure du PDF, on décompresse le contenu des pages avec
+   DecompressionStream, on note où chaque image et chaque texte sont posés, et
+   on rattache à chaque photo le texte écrit juste en dessous.
+   Les élèves sans photo reçoivent tous la même silhouette, un seul objet posé
+   plusieurs fois : toute image qui revient plus d'une fois est écartée. */
+
+class PNom{ constructor(n){ this.n = n; } }
+class PRef{ constructor(r){ this.r = r; } }
+class PStr{ constructor(s){ this.s = s; } }
+class POp { constructor(o){ this.o = o; } }
+const P_WS = " \t\n\r\f\0", P_DELIM = "()<>[]{}/%";
+
+const latin1 = u8 => {
+  let s = "";
+  for(let i=0; i<u8.length; i+=8192) s += String.fromCharCode.apply(null, u8.subarray(i, i+8192));
+  return s;
+};
+
+/* Lecteur d'objets PDF, qui sert aussi pour les flux de contenu des pages
+   (les opérateurs y sortent en POp). */
+function pdfLexer(s, i){
+  const reg = c => c !== undefined && !P_WS.includes(c) && !P_DELIM.includes(c);
+  function skip(){
+    for(;;){
+      while(i < s.length && P_WS.includes(s[i])) i++;
+      if(s[i] !== "%") return;
+      while(i < s.length && s[i] !== "\n" && s[i] !== "\r") i++;
+    }
+  }
+  function value(){
+    skip();
+    if(i >= s.length) return undefined;
+    const c = s[i];
+    if(c === "/"){
+      const j = ++i; while(reg(s[i])) i++;
+      return new PNom(s.slice(j, i).replace(/#([0-9a-fA-F]{2})/g, (m,h)=>String.fromCharCode(parseInt(h,16))));
+    }
+    if(c === "<" && s[i+1] === "<"){
+      i += 2; const d = {};
+      for(;;){
+        skip();
+        if(i >= s.length) return d;
+        if(s[i] === ">"){ i += 2; return d; }
+        const k = value(), v = value();
+        if(k instanceof PNom) d[k.n] = v;
+      }
+    }
+    if(c === "<"){
+      const j = s.indexOf(">", i);
+      let h = s.slice(i+1, j < 0 ? s.length : j).replace(/[^0-9a-fA-F]/g, "");
+      i = j < 0 ? s.length : j + 1;
+      if(h.length % 2) h += "0";
+      let o = ""; for(let k=0; k<h.length; k+=2) o += String.fromCharCode(parseInt(h.substr(k,2),16));
+      return new PStr(o);
+    }
+    if(c === "("){
+      i++; let o = "", depth = 1;
+      while(i < s.length){
+        const ch = s[i++];
+        if(ch === "\\"){
+          const e = s[i++];
+          if(e >= "0" && e <= "7"){
+            let oct = e; while(oct.length < 3 && s[i] >= "0" && s[i] <= "7") oct += s[i++];
+            o += String.fromCharCode(parseInt(oct,8) & 255);
+          }
+          else if(e === "\r"){ if(s[i] === "\n") i++; }
+          else if(e !== "\n") o += ({n:"\n", r:"\r", t:"\t", b:"\b", f:"\f"})[e] ?? e;
+        }
+        else if(ch === "("){ depth++; o += ch; }
+        else if(ch === ")"){ if(--depth === 0) break; o += ch; }
+        else o += ch;
+      }
+      return new PStr(o);
+    }
+    if(c === "["){
+      i++; const a = [];
+      for(;;){ skip(); if(i >= s.length || s[i] === "]"){ i++; return a; } a.push(value()); }
+    }
+    if(!reg(c)){ i++; return new POp(c); }
+    const j = i; while(reg(s[i])) i++;
+    const t = s.slice(j, i);
+    if(/^[+-]?(\d+\.?\d*|\.\d+)$/.test(t)){
+      const m = /^\s+\d+\s+R(?=[\s\/<>\[\]()%]|$)/.exec(s.substr(i, 24));   // « 12 0 R »
+      if(m && /^\d+$/.test(t)){ i += m[0].length; return new PRef(+t); }
+      return +t;
+    }
+    if(t === "true") return true;
+    if(t === "false") return false;
+    if(t === "null") return null;
+    return new POp(t);
+  }
+  return {value, skip, get pos(){ return i; }, set pos(v){ i = v; }};
+}
+
+/* Décompression zlib. Quelques octets parasites après la fin des données sont
+   courants dans les PDF : on garde ce qui a été lu plutôt que tout refuser. */
+async function pdfInflate(u8){
+  const r = new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate")).getReader();
+  const parts = []; let n = 0;
+  try{ for(;;){ const {done, value} = await r.read(); if(done) break; parts.push(value); n += value.length; } }
+  catch(e){ if(!n) throw e; }
+  const out = new Uint8Array(n); let k = 0;
+  parts.forEach(p=>{ out.set(p, k); k += p.length; });
+  return out;
+}
+
+function pdfDoc(u8){
+  const s = latin1(u8);
+  const debut = s.indexOf("%PDF");
+  if(debut < 0 || debut > 1024) throw new Error("Ce fichier n'est pas un PDF.");
+  if(/\/Encrypt[\s\/<]/.test(s)) throw new Error("Ce PDF est protégé : l'application ne peut pas le lire.");
+  const objs = {}, L = pdfLexer(s, 0), re = /(\d+)\s+\d+\s+obj\b/g;
+  let m;
+  while((m = re.exec(s))){
+    L.pos = re.lastIndex;
+    let v; try{ v = L.value(); }catch(e){ continue; }
+    L.skip();
+    let st = null;
+    if(s.startsWith("stream", L.pos)){
+      let a = L.pos + 6; if(s[a] === "\r") a++; if(s[a] === "\n") a++;
+      const e = s.indexOf("endstream", a);
+      st = {a, e: e < 0 ? s.length : e};
+      re.lastIndex = st.e;                       // ne pas chercher d'objets dans les octets d'une image
+    }else re.lastIndex = L.pos;
+    objs[+m[1]] = {v, st};
+  }
+  const get = x => { let k = 0; while(x instanceof PRef && k++ < 32){ const o = objs[x.r]; x = o ? o.v : null; } return x; };
+  const dict = x => { x = get(x); return x && x.constructor === Object ? x : null; };
+
+  /* Données d'un flux, filtres Flate appliqués ; s'arrête sur un JPEG. */
+  async function stream(ref){
+    const o = ref instanceof PRef && objs[ref.r];
+    if(!o || !o.st) return null;
+    const d = o.v || {}, len = get(d.Length);
+    let end;
+    if(typeof len === "number" && len >= 0 && o.st.a + len <= s.length) end = o.st.a + len;
+    else { end = o.st.e; while(end > o.st.a && (s[end-1] === "\n" || s[end-1] === "\r")) end--; }
+    let bytes = u8.subarray(o.st.a, end);
+    let f = get(d.Filter);
+    f = f == null ? [] : Array.isArray(f) ? f.map(get) : [f];
+    for(const x of f){
+      const n = x && x.n;
+      if(n === "FlateDecode" || n === "Fl") bytes = await pdfInflate(bytes);
+      else if(n === "DCTDecode" || n === "DCT") return {bytes, dict:d, jpeg:true};
+      else return null;                          // filtre non pris en charge
+    }
+    return {bytes, dict:d, jpeg:false};
+  }
+
+  const pages = [];
+  function walk(node, res, depth){
+    const n = dict(node);
+    if(!n || depth > 32) return;
+    const r = n.Resources !== undefined ? dict(n.Resources) : res;
+    const kids = get(n.Kids);
+    if(Array.isArray(kids)) kids.forEach(k=>walk(k, r, depth+1));
+    else pages.push({node:n, res:r});
+  }
+  const cat = Object.values(objs).map(o=>o.v).find(v=>v && v.constructor === Object && get(v.Type) && get(v.Type).n === "Catalog");
+  if(cat) walk(cat.Pages, null, 0);
+  if(!pages.length){
+    Object.values(objs).forEach(o=>{
+      const v = o.v;
+      if(v && v.constructor === Object && get(v.Type) && get(v.Type).n === "Page") pages.push({node:v, res:dict(v.Resources)});
+    });
+  }
+  if(!pages.length){
+    if(/\/ObjStm\b/.test(s)) throw new Error("Ce PDF utilise une structure compressée que l'application ne sait pas lire.");
+    throw new Error("Aucune page lisible dans ce PDF.");
+  }
+
+  async function content(node){
+    let c = node.Contents;
+    if(c instanceof PRef && Array.isArray(get(c))) c = get(c);
+    const parts = [];
+    for(const ref of (Array.isArray(c) ? c : [c])){
+      const d = await stream(ref);
+      if(d) parts.push(latin1(d.bytes));
+    }
+    return parts.join("\n");
+  }
+  return {get, dict, stream, pages, content};
+}
+
+/* --- Texte : du code des caractères au texte lisible --- */
+const GLYPH_ACC = {acute:"́", grave:"̀", circumflex:"̂", dieresis:"̈",
+                   cedilla:"̧", tilde:"̃", ring:"̊"};
+function glyphChar(n){
+  if(n.length === 1) return n;
+  let m = /^uni([0-9A-Fa-f]{4})$/.exec(n);
+  if(m) return String.fromCharCode(parseInt(m[1],16));
+  m = /^([A-Za-z])(acute|grave|circumflex|dieresis|cedilla|tilde|ring)$/.exec(n);
+  if(m) return (m[1] + GLYPH_ACC[m[2]]).normalize("NFC");
+  return ({space:" ", hyphen:"-", quotesingle:"'", quoteright:"'", period:".",
+           AE:"Æ", ae:"æ", OE:"Œ", oe:"œ", germandbls:"ß"})[n] ?? null;
+}
+function parseCMap(t){
+  const map = {}, hex = h => h.replace(/[^0-9a-fA-F]/g, "");
+  const uni = h => {
+    h = hex(h);
+    if(h.length <= 2) return h ? String.fromCharCode(parseInt(h,16)) : "";
+    let o = ""; for(let k=0; k+4<=h.length; k+=4) o += String.fromCharCode(parseInt(h.substr(k,4),16));
+    return o;
+  };
+  const cs = /begincodespacerange\s*<([0-9a-fA-F]+)>/.exec(t);
+  const bytes = cs ? Math.max(1, cs[1].length/2) : 1;
+  for(const b of t.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))
+    for(const m of b[1].matchAll(/<([0-9a-fA-F\s]+)>\s*<([0-9a-fA-F\s]*)>/g))
+      map[parseInt(hex(m[1]),16)] = uni(m[2]);
+  for(const b of t.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))
+    for(const m of b[1].matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F\s]+>|\[[^\]]*\])/g)){
+      const lo = parseInt(m[1],16), hi = Math.min(parseInt(m[2],16), lo + 65535);
+      if(m[3][0] === "["){
+        const a = [...m[3].matchAll(/<([0-9a-fA-F\s]+)>/g)];
+        for(let c=lo; c<=hi && c-lo<a.length; c++) map[c] = uni(a[c-lo][1]);
+      }else{
+        const h = hex(m[3]), pre = h.length > 4 ? uni(h.slice(0,-4)) : "", base = parseInt(h.slice(-4),16);
+        for(let c=lo; c<=hi; c++) map[c] = pre + String.fromCharCode(base + c - lo);
+      }
+    }
+  return {bytes, map};
+}
+async function pdfFont(doc, ref){
+  const f = doc.dict(ref) || {};
+  if(f.ToUnicode instanceof PRef){
+    const d = await doc.stream(f.ToUnicode);
+    if(d){
+      const {bytes, map} = parseCMap(latin1(d.bytes));
+      return str=>{
+        let o = "";
+        for(let k=0; k+bytes<=str.length; k+=bytes){
+          let c = 0; for(let b=0; b<bytes; b++) c = c*256 + str.charCodeAt(k+b);
+          o += map[c] ?? "";
+        }
+        return o;
+      };
+    }
+  }
+  const sub = doc.get(f.Subtype);
+  if(sub && sub.n === "Type0") return ()=>"";   // codes sur deux octets sans table : illisible
+  let enc = doc.get(f.Encoding), base = "windows-1252";
+  const diff = {};
+  const encDict = enc && enc.constructor === Object ? enc : null;
+  const baseNom = encDict ? doc.get(encDict.BaseEncoding) : enc;
+  if(baseNom instanceof PNom && baseNom.n === "MacRomanEncoding") base = "macintosh";
+  if(encDict){
+    let code = 0;
+    (doc.get(encDict.Differences) || []).forEach(x=>{
+      if(typeof x === "number") code = x;
+      else if(x instanceof PNom){ const ch = glyphChar(x.n); if(ch != null) diff[code] = ch; code++; }
+    });
+  }
+  let tab;
+  try{ tab = new TextDecoder(base).decode(Uint8Array.from({length:256}, (_,i)=>i)); }
+  catch(e){ tab = new TextDecoder("windows-1252").decode(Uint8Array.from({length:256}, (_,i)=>i)); }
+  return str=>{ let o = ""; for(let k=0; k<str.length; k++){ const c = str.charCodeAt(k) & 255; o += diff[c] ?? tab[c]; } return o; };
+}
+
+/* --- Contenu d'une page : où sont posés les images et les textes --- */
+const M_ID = [1,0,0,1,0,0];
+const mmul = (a, b) => [a[0]*b[0]+a[1]*b[2], a[0]*b[1]+a[1]*b[3], a[2]*b[0]+a[3]*b[2],
+                        a[2]*b[1]+a[3]*b[3], a[4]*b[0]+a[5]*b[2]+b[4], a[4]*b[1]+a[5]*b[3]+b[5]];
+async function pdfRun(doc, text, res, ctm0, out, depth){
+  const L = pdfLexer(text, 0), pile = [], polices = {};
+  let ops = [], ctm = ctm0.slice(), tm = M_ID, tlm = M_ID, TL = 0, font = null, fsize = 1;
+  const resDict = k => (res && doc.dict(res[k])) || {};
+  const police = nom => polices[nom] || (polices[nom] = pdfFont(doc, resDict("Font")[nom]));
+  const nums = a => a.map(x=>typeof x === "number" ? x : 0);
+  const saut = (tx, ty) => { tlm = mmul([1,0,0,1,tx,ty], tlm); tm = tlm; };
+  async function montre(items){
+    if(!font) return;
+    const dec = await police(font);
+    let t = "";
+    items.forEach(x=>{
+      if(x instanceof PStr) t += dec(x.s);
+      else if(typeof x === "number" && x < -250) t += " ";   // grand écart dans un TJ : une espace
+    });
+    const m = mmul(tm, ctm);
+    out.txt.push({x:m[4], y:m[5], s:t, size:Math.abs(fsize) * (Math.hypot(m[0], m[1]) || 1)});
+  }
+  for(;;){
+    const v = L.value();
+    if(v === undefined) break;
+    if(!(v instanceof POp)){ ops.push(v); continue; }
+    const a = ops; ops = [];
+    switch(v.o){
+      case "q": pile.push(ctm); break;
+      case "Q": ctm = pile.pop() || ctm; break;
+      case "cm": if(a.length >= 6) ctm = mmul(nums(a.slice(-6)), ctm); break;
+      case "BT": tm = tlm = M_ID; break;
+      case "Tf": if(a[0] instanceof PNom){ font = a[0].n; fsize = +a[1] || 1; } break;
+      case "TL": TL = +a[0] || 0; break;
+      case "Td": saut(+a[0] || 0, +a[1] || 0); break;
+      case "TD": TL = -(+a[1] || 0); saut(+a[0] || 0, +a[1] || 0); break;
+      case "Tm": if(a.length >= 6){ tlm = nums(a.slice(-6)); tm = tlm; } break;
+      case "T*": saut(0, -TL); break;
+      case "Tj": await montre([a[0]]); break;
+      case "'": saut(0, -TL); await montre([a[0]]); break;
+      case '"': saut(0, -TL); await montre([a[2]]); break;
+      case "TJ": if(Array.isArray(a[0])) await montre(a[0]); break;
+      case "ID": {                                 // image en ligne : sauter ses octets
+        const k = text.slice(L.pos).search(/\sEI(?=\s|$)/);
+        L.pos = k < 0 ? text.length : L.pos + k + 3;
+        break;
+      }
+      case "Do": {
+        if(!(a[0] instanceof PNom)) break;
+        const ref = resDict("XObject")[a[0].n], x = doc.dict(ref);
+        if(!x) break;
+        const sub = doc.get(x.Subtype);
+        if(sub && sub.n === "Image"){
+          const px = [[0,0],[1,0],[0,1],[1,1]].map(([u,w])=>ctm[0]*u + ctm[2]*w + ctm[4]);
+          const py = [[0,0],[1,0],[0,1],[1,1]].map(([u,w])=>ctm[1]*u + ctm[3]*w + ctm[5]);
+          out.imgs.push({ref, x0:Math.min(...px), x1:Math.max(...px), y0:Math.min(...py), y1:Math.max(...py),
+                         w:doc.get(x.Width), h:doc.get(x.Height)});
+        }else if(sub && sub.n === "Form" && depth < 4){
+          const d = await doc.stream(ref);
+          const fm = doc.get(x.Matrix);
+          if(d) await pdfRun(doc, latin1(d.bytes), doc.dict(x.Resources) || res,
+                             mmul(Array.isArray(fm) && fm.length === 6 ? nums(fm) : M_ID, ctm), out, depth+1);
+        }
+        break;
+      }
+    }
+  }
+}
+
+/* Renvoie {titre, eleves:[{nom, blob, w, h, silhouette}]}, élèves dans l'ordre de lecture.
+   Le titre est le premier texte en gros caractères (« Classe : … ») : il sert à
+   signaler un trombinoscope qui ne correspond pas à la classe. */
+async function readTrombiPdf(file){
+  if(typeof DecompressionStream === "undefined")
+    throw new Error("Ce navigateur ne sait pas lire les PDF. Mettez l'iPad à jour (iOS 16.4 ou plus).");
+  const doc = pdfDoc(new Uint8Array(await file.arrayBuffer()));
+  const lus = [];
+  let titre = "";
+  for(let p=0; p<doc.pages.length; p++){
+    const out = {imgs:[], txt:[]};
+    await pdfRun(doc, await doc.content(doc.pages[p].node), doc.pages[p].res, M_ID, out, 0);
+    if(!titre){
+      const t = out.txt.find(t=>t.size >= 13 && t.s.trim());
+      if(t) titre = t.s.replace(/\s+/g, " ").trim();
+    }
+    const vues = out.imgs.filter(im=>im.x1 - im.x0 >= 15 && im.y1 - im.y0 >= 15);
+    const lignes = vues.map(()=>[]);
+    out.txt.forEach((t, k)=>{
+      const s = t.s.replace(/\s+/g, " ").trim();
+      if(!s) return;
+      const centre = t.x + s.length * t.size * 0.26;   // largeur estimée : le nom est centré sous la photo
+      let best = -1, bd = Infinity;
+      vues.forEach((im, j)=>{
+        const dy = im.y0 - t.y;                        // le texte est sous le bas de l'image
+        if(dy <= 0 || dy > 50) return;
+        const d = Math.abs(centre - (im.x0 + im.x1)/2);
+        if(d < bd && d < Math.max(60, im.x1 - im.x0)){ bd = d; best = j; }
+      });
+      if(best >= 0) lignes[best].push({s, y:t.y, k});
+    });
+    vues.forEach((im, j)=>{
+      const nom = lignes[j]
+        .sort((a,b)=> b.y - a.y > 1.5 ? 1 : a.y - b.y > 1.5 ? -1 : a.k - b.k)
+        .map(l=>l.s).join(" ");
+      lus.push({page:p, x:im.x0, y:im.y1, ref:im.ref, w:im.w, h:im.h, nom});
+    });
+  }
+  const data = {};
+  for(const l of lus){
+    const r = l.ref instanceof PRef ? l.ref.r : -1;
+    if(!(r in data)) data[r] = await doc.stream(l.ref);
+  }
+  // une même image posée plusieurs fois, même objet ou mêmes octets : c'est la silhouette
+  const cle = l => { const d = data[l.ref instanceof PRef ? l.ref.r : -1]; return d ? d.bytes.length + ":" + hash36(latin1(d.bytes)) : "?"; };
+  const vus = {};
+  lus.forEach(l=>{ l.cle = cle(l); vus[l.cle] = (vus[l.cle] || 0) + 1; });
+  lus.sort((a,b)=> a.page - b.page || (Math.abs(a.y - b.y) > 5 ? b.y - a.y : a.x - b.x));
+  const eleves = lus.filter(l=>l.nom).map(l=>{
+    const d = data[l.ref instanceof PRef ? l.ref.r : -1];
+    return {nom:l.nom, w:l.w, h:l.h, silhouette: vus[l.cle] > 1,
+            blob: d && d.jpeg ? new Blob([d.bytes], {type:"image/jpeg"}) : null};
+  });
+  return {titre, eleves};
+}
+
 /* --- Métadonnées de l'entête École Directe --- */
 function sniffClassName(grid, head){
   for(let i=0;i<head;i++){
@@ -813,8 +1237,8 @@ function avatar(c, n, gr){
 }
 
 /* ============ Onglets ============ */
-$$(".tabs button").forEach(b=>b.addEventListener("click",()=>{
-  $$(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
+$$(".tabs button[data-t]").forEach(b=>b.addEventListener("click",()=>{
+  $$(".tabs button[data-t]").forEach(x=>x.classList.toggle("on",x===b));
   $$(".screen").forEach(x=>x.classList.remove("on"));
   $(b.dataset.t).classList.add("on");
   if(b.dataset.t==="#t-suivi") paintAnnual();
@@ -832,7 +1256,7 @@ function cstep(id){
   window.scrollTo(0,0);
 }
 function goTab(sel){
-  $$(".tabs button").forEach(x=>x.classList.toggle("on", x.dataset.t===sel));
+  $$(".tabs button[data-t]").forEach(x=>x.classList.toggle("on", x.dataset.t===sel));
   $$(".screen").forEach(x=>x.classList.toggle("on", "#"+x.id===sel));
 }
 
@@ -1017,7 +1441,12 @@ function paintModels(){
   }).join("");
   $$("#c-models .card").forEach(b=>b.addEventListener("click",()=>{
     if(classes[draft.name] && !confirm(`La classe « ${draft.name} » existe déjà. La remplacer ?`)) return;
+    // remplacer la liste ne doit pas faire refaire le trombinoscope : photos et
+    // compteur de vérifications restent, rattachés par nom
+    const avant = classes[draft.name] || {};
     classes[draft.name]={names:draft.names, cfg:defaultCfg(b.dataset.m)};
+    if(avant.photos) classes[draft.name].photos = avant.photos;
+    if(avant.verif)  classes[draft.name].verif  = avant.verif;
     save(K_C,classes); fillClassSelects();
     openCfg(draft.name);
   }));
@@ -1078,11 +1507,18 @@ $("#cfg-save").addEventListener("click",()=>{
 });
 /* ============ Photos de la classe ============
    Elles vivent dans classes[cls].photos, donc elles partent dans la sauvegarde
-   et en reviennent. Elles ne sont jamais encodées dans un QR : trop volumineuses,
-   et aucune photo d'élève n'a à transiter vers l'iPad d'un autre élève. */
+   et en reviennent. Vers les observateurs, elles ne voyagent qu'assemblées en
+   planche et découpées en fragments QR, à l'ouverture d'une séance. */
 const PHOTO_FMT = "participation-photos-v1";
+const PHOTO_W = 96, PHOTO_H = 128;   // double de la cellule de planche : net sur écran Retina
+let photoFor = null;                  // élève dont on remplace la photo
 function photoState(){
   const ph = photosOf(cfgCls), noms = namesOf(cfgCls), n = Object.keys(ph).length;
+  $("#cfg-photo-grid").innerHTML = noms.map((x,i)=>
+    `<button data-p="${i}">${avatar(cfgCls,x)}<span class="nmp">${esc(x)}</span></button>`).join("");
+  $$("#cfg-photo-grid button[data-p]").forEach(b=>b.addEventListener("click",()=>{
+    photoFor = noms[+b.dataset.p]; $("#cfg-photo-one").click();
+  }));
   if(!n){ $("#cfg-photo-etat").textContent = "Aucune photo pour cette classe."; return; }
   const avec = noms.filter(x=>ph[x]).length;
   const orph = Object.keys(ph).filter(x=>!noms.includes(x));
@@ -1091,6 +1527,240 @@ function photoState(){
     (avec<noms.length ? `<br>${noms.length-avec} sans photo.` : "") +
     (orph.length ? `<br>${orph.length} photo${orph.length>1?"s":""} non rattachée${orph.length>1?"s":""} : ${orph.map(esc).join(", ")}.` : "");
 }
+/* Réduit une image au format vignette 3:4, recadrée au centre, un peu vers le haut
+   pour ne pas couper le front. Quelques Ko par élève au lieu de plusieurs Mo. */
+function shrinkPhoto(file){
+  return new Promise((res, rej)=>{
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = ()=>{
+      const cv = document.createElement("canvas"); cv.width = PHOTO_W; cv.height = PHOTO_H;
+      const r = Math.max(PHOTO_W/im.naturalWidth, PHOTO_H/im.naturalHeight);
+      const w = im.naturalWidth*r, h = im.naturalHeight*r;
+      const cx = cv.getContext("2d");
+      cx.fillStyle = "#fff"; cx.fillRect(0, 0, PHOTO_W, PHOTO_H);
+      cx.drawImage(im, (PHOTO_W-w)/2, (PHOTO_H-h)*0.3, w, h);
+      URL.revokeObjectURL(url);
+      res(cv.toDataURL("image/jpeg", 0.72));
+    };
+    im.onerror = ()=>{ URL.revokeObjectURL(url); rej(new Error(`Image illisible : ${file.name || "photo"}`)); };
+    im.src = url;
+  });
+}
+/* Enregistre les photos modifiées, ou remet les anciennes si le stockage est plein. */
+function storePhotos(ph){
+  const avant = classes[cfgCls].photos;
+  classes[cfgCls].photos = ph;
+  if(save(K_C, classes)) return true;
+  if(avant) classes[cfgCls].photos = avant; else delete classes[cfgCls].photos;
+  return false;
+}
+/* ---- Rapprochement approché d'un texte lu et d'un nom de la liste ----
+   Sans accents ni casse, mots dans n'importe quel ordre, et tolérant aux
+   caractères manquants ou mal lus : « B RANGER lise » ressemble encore à
+   « Élise Béranger ». Deux mesures, on garde la meilleure :
+   - mot à mot : chaque mot de l'un rapproché du mot le plus proche de l'autre
+     (distance d'édition), pondéré par la longueur ; une initiale (« Marie D. »)
+     vaut un mot entier si elle en est la première lettre ;
+   - nom collé : les lettres mises bout à bout, dans tous les ordres des mots,
+     pour le cas où un caractère illisible a coupé un mot en deux.
+   Le score va de 0 à 1. */
+const SEUIL_PROPOSE = 0.6, SEUIL_SUR = 0.85, MARGE_SUR = 0.08;
+const mots = s => String(s).normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase()
+  .split(/[^a-z0-9]+/).filter(Boolean);
+function lev(a, b){
+  if(a === b) return 0;
+  let prev = Array.from({length:b.length+1}, (_,j)=>j);
+  for(let i=1; i<=a.length; i++){
+    const cur = [i];
+    for(let j=1; j<=b.length; j++)
+      cur[j] = Math.min(prev[j]+1, cur[j-1]+1, prev[j-1] + (a[i-1]===b[j-1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function tokSim(x, y){
+  if(x === y) return 1;
+  const [c, l] = x.length < y.length ? [x, y] : [y, x];
+  if(c.length === 1) return l[0] === c ? 1 : 0;
+  return Math.max(0, 1 - lev(x, y)/l.length);
+}
+function permutations(t){
+  if(t.length <= 1 || t.length > 4) return [t];
+  return t.flatMap((x,i)=>permutations([...t.slice(0,i), ...t.slice(i+1)]).map(p=>[x, ...p]));
+}
+function nameScore(txt, nom){
+  const A = mots(txt), B = mots(nom);
+  if(!A.length || !B.length) return 0;
+  const couvre = (X, Y) => {
+    let s = 0, w = 0;
+    X.forEach(x=>{ s += Math.max(...Y.map(y=>tokSim(x, y))) * x.length; w += x.length; });
+    return s / w;
+  };
+  const parMots = 0.6*couvre(B, A) + 0.4*couvre(A, B);
+  const ja = A.join("");
+  let colle = 0;
+  for(const p of permutations(B)){
+    const jb = p.join("");
+    colle = Math.max(colle, 1 - lev(ja, jb)/Math.max(ja.length, jb.length));
+  }
+  return Math.max(parMots, colle);
+}
+/* Attribution de toute une série de textes : les meilleures ressemblances
+   d'abord, chaque élève au plus une fois. Un rattachement est « sûr » s'il est
+   net et qu'aucun autre élève, ni aucun autre texte, n'en est presque aussi proche. */
+function assignNames(textes, noms){
+  const S = textes.map(t=>noms.map(n=>nameScore(t, n)));
+  const paires = [];
+  S.forEach((r,i)=>r.forEach((s,j)=>{ if(s >= SEUIL_PROPOSE) paires.push([s,i,j]); }));
+  paires.sort((a,b)=>b[0]-a[0]);
+  const res = textes.map(()=>null), pris = new Set();
+  paires.forEach(([s,i,j])=>{
+    if(res[i] || pris.has(j)) return;
+    pris.add(j);
+    const autreEleve = Math.max(0, ...S[i].filter((_,k)=>k!==j));
+    const autreTexte = Math.max(0, ...S.map((r,k)=>k!==i ? r[j] : 0));
+    res[i] = {eleve:noms[j], score:s,
+              sur: s >= SEUIL_SUR && s - autreEleve >= MARGE_SUR && s - autreTexte >= MARGE_SUR};
+  });
+  return res;
+}
+/* Pour des fichiers isolés, sans écran de vérification : seulement les rattachements sûrs. */
+const matchFile = (fname, noms) => matchName(fname.replace(/\.[^.]+$/,""), noms);
+function matchName(txt, noms){
+  const r = assignNames([txt], noms)[0];
+  return r && r.sur ? r.eleve : null;
+}
+$("#cfg-photo-one").addEventListener("change", async e=>{
+  const f = e.target.files[0], nom = photoFor; e.target.value = ""; photoFor = null;
+  if(!f || !nom) return;
+  $("#cfg-photo-err").textContent = "";
+  try{
+    const ph = {...photosOf(cfgCls), [nom]: await shrinkPhoto(f)};
+    if(!storePhotos(ph)) throw new Error("Stockage saturé : la photo n'a pas pu être enregistrée.");
+    photoState();
+  }catch(err){ $("#cfg-photo-err").textContent = err.message || "Image illisible."; }
+});
+$("#cfg-photo-imgs").addEventListener("change", async e=>{
+  const files = Array.from(e.target.files); e.target.value = "";
+  if(!files.length) return;
+  $("#cfg-photo-err").textContent = "";
+  const pdf = files.find(f=>f.type==="application/pdf" || /\.pdf$/i.test(f.name));
+  if(pdf){ openTrombi(pdf); return; }
+  const noms = namesOf(cfgCls), ph = {...photosOf(cfgCls)}, rates = [];
+  let pris = 0;
+  for(const f of files){
+    const nom = matchFile(f.name, noms);
+    if(!nom){ rates.push(f.name); continue; }
+    try{ ph[nom] = await shrinkPhoto(f); pris++; }catch(err){ rates.push(f.name); }
+  }
+  if(pris && !storePhotos(ph)){ $("#cfg-photo-err").textContent = "Stockage saturé : les photos n'ont pas pu être enregistrées."; return; }
+  photoState();
+  if(rates.length) $("#cfg-photo-err").textContent =
+    `${pris} photo${pris>1?"s":""} ajoutée${pris>1?"s":""}. Non rattaché${rates.length>1?"s":""} à un élève : ${rates.join(", ")}. ` +
+    `Renommez ces fichiers comme dans la liste, ou touchez l'élève ci-dessus pour choisir sa photo.`;
+});
+/* ---- Trombinoscope PDF d'École Directe ----
+   La lecture propose un rattachement, le professeur le vérifie avant que rien
+   ne soit enregistré. Les silhouettes des élèves sans photo sont écartées. */
+let trombi = null;
+const blobUrl = b => new Promise((res, rej)=>{
+  const r = new FileReader(); r.onload = ()=>res(r.result); r.onerror = rej; r.readAsDataURL(b);
+});
+async function openTrombi(file){
+  $("#cfg-photo-err").textContent = "Lecture du trombinoscope…";
+  try{
+    const {titre, eleves:lus} = await readTrombiPdf(file);
+    if(!lus.length) throw new Error("Aucune photo avec un nom trouvée dans ce PDF.");
+    const noms = namesOf(cfgCls);
+    // tous les noms du PDF entrent dans l'attribution, silhouettes comprises :
+    // sinon un élève sans photo pourrait se voir attribuer la photo d'un homonyme
+    const att = assignNames(lus.map(l=>l.nom), noms);
+    const trouves = att.filter(Boolean).length;
+    trombi = {photos:[], sans:[], titre,
+              horsListe: lus.filter((l,i)=>!att[i]).map(l=>l.nom),
+              absentsPdf: noms.filter(n=>!att.some(a=>a && a.eleve===n)),
+              total: lus.length, trouves,
+              // moins d'un nom sur deux reconnu : ce n'est vraisemblablement pas cette classe
+              autreClasse: trouves < lus.length/2};
+    for(let i=0; i<lus.length; i++){
+      const l = lus[i], a = att[i];
+      let src = null;
+      if(!l.silhouette && l.blob){
+        try{ src = (l.w===PHOTO_W && l.h===PHOTO_H) ? await blobUrl(l.blob) : await shrinkPhoto(l.blob); }catch(err){}
+      }
+      if(!src){ trombi.sans.push(a ? a.eleve : l.nom); continue; }
+      trombi.photos.push({nom:l.nom, src, eleve: a ? a.eleve : null, score: a ? a.score : 0,
+                          aVerifier: !!a && !a.sur});
+    }
+    if(!trombi.photos.length) throw new Error("Ce PDF ne contient que des silhouettes : aucune vraie photo à importer.");
+    $("#cfg-photo-err").textContent = "";
+    paintTrombi();
+    $("#trombi").classList.add("on"); window.scrollTo(0,0);
+  }catch(err){ $("#cfg-photo-err").textContent = err.message || "PDF illisible."; }
+}
+function paintTrombi(){
+  const noms = namesOf(cfgCls), P = trombi.photos, T = trombi;
+  const sur = P.filter(p=>p.eleve && !p.aVerifier).length, douteux = P.filter(p=>p.aVerifier).length;
+  $("#trombi-sub").textContent = `${cfgCls} · ${P.length} photo${P.length>1?"s":""} lue${P.length>1?"s":""} · ` +
+    `${sur} rattachée${sur>1?"s":""} avec certitude` + (douteux ? ` · ${douteux} à vérifier` : "");
+  const liste = a => a.map(esc).join(", ");
+  $("#trombi-alerte").innerHTML = T.autreClasse
+    ? `<div class="warnbox"><strong>Ce trombinoscope ne semble pas être celui de « ${esc(cfgCls)} ».</strong>
+        Seul${T.trouves>1?"s":""} ${T.trouves} nom${T.trouves>1?"s":""} du PDF sur ${T.total} ressemble${T.trouves>1?"nt":""} à un élève de la liste.
+        ${T.titre ? `Le PDF porte le titre « ${esc(T.titre)} ».` : ""}
+        Vérifiez la classe choisie avant d'enregistrer.</div>`
+    : (T.horsListe.length || T.absentsPdf.length)
+      ? `<div class="warnbox">` +
+        (T.horsListe.length ? `<strong>Dans le PDF, introuvable${T.horsListe.length>1?"s":""} dans votre liste :</strong> ${liste(T.horsListe)}.<br>` : "") +
+        (T.absentsPdf.length ? `<strong>Dans votre liste, absent${T.absentsPdf.length>1?"s":""} du PDF :</strong> ${liste(T.absentsPdf)}.` : "") +
+        `</div>`
+      : "";
+  const etat = p => !p.eleve ? "var(--warn)" : p.aVerifier ? "var(--amber)" : "";
+  $("#trombi-tbl").innerHTML = P.map((p,k)=>`<div class="r">
+      <img class="ava" src="${esc(p.src)}" alt="">
+      <span class="nm" style="white-space:normal;display:flex;flex-direction:column;gap:4px">
+        <span class="sub" style="margin:0;font-size:13px;font-weight:500">Lu dans le PDF : ${esc(p.nom)}
+          <span data-v="${k}" class="pill" style="color:var(--amber);${p.aVerifier?"":"display:none"}">à vérifier · ressemblance ${Math.round(p.score*100)} %</span></span>
+        <select data-t="${k}" style="padding:8px 10px;border-color:${etat(p)}">
+          <option value="">— Ne pas utiliser —</option>
+          ${noms.map(n=>`<option${n===p.eleve?" selected":""}>${esc(n)}</option>`).join("")}
+        </select></span></div>`).join("");
+  $$("#trombi-tbl select").forEach(s=>s.addEventListener("change",()=>{
+    const p = P[+s.dataset.t];
+    p.eleve = s.value || null;
+    p.aVerifier = false;                         // choisi à la main : c'est tranché
+    s.style.borderColor = etat(p);
+    $(`#trombi-tbl [data-v="${s.dataset.t}"]`).style.display = "none";
+    checkTrombi();
+  }));
+  checkTrombi();
+}
+function checkTrombi(){
+  const noms = namesOf(cfgCls), P = trombi.photos, ph = photosOf(cfgCls);
+  const choisis = P.map(p=>p.eleve).filter(Boolean);
+  const doubles = [...new Set(choisis.filter((n,i)=>choisis.indexOf(n)!==i))];
+  const reste = noms.filter(n=>!choisis.includes(n) && !ph[n]);
+  $("#trombi-sans").innerHTML =
+    (trombi.sans.length ? `Sans photo dans École Directe : ${trombi.sans.map(esc).join(", ")}.<br>` : "") +
+    (reste.length ? `<strong>Toujours sans photo après cet import : ${reste.map(esc).join(", ")}.</strong>` : "Tous les élèves auront une photo.");
+  $("#trombi-err").textContent = doubles.length ? `Choisi pour deux photos : ${doubles.join(", ")}.` : "";
+  $("#trombi-ok").disabled = !!doubles.length || !choisis.length;
+}
+$("#trombi-ok").addEventListener("click",()=>{
+  const reste = trombi.photos.filter(p=>p.eleve && p.aVerifier).length;
+  if(trombi.autreClasse && !confirm(`Ce trombinoscope ne semble pas être celui de « ${cfgCls} ». Enregistrer quand même ?`)) return;
+  if(reste && !confirm(`${reste} rattachement${reste>1?"s":""} marqué${reste>1?"s":""} « à vérifier » n'${reste>1?"ont":"a"} pas été confirmé${reste>1?"s":""}. Enregistrer quand même ?`)) return;
+  const ph = {...photosOf(cfgCls)};
+  let n = 0;
+  trombi.photos.forEach(p=>{ if(p.eleve){ ph[p.eleve] = p.src; n++; } });
+  if(!storePhotos(ph)){ $("#trombi-err").textContent = "Stockage saturé : les photos n'ont pas pu être enregistrées."; return; }
+  trombi = null;
+  $("#trombi").classList.remove("on");
+  photoState();
+  $("#cfg-photo-err").textContent = `${n} photo${n>1?"s":""} enregistrée${n>1?"s":""}.`;
+});
+$("#trombi-close").addEventListener("click",()=>{ trombi = null; $("#trombi").classList.remove("on"); });
+
 $("#cfg-photo-file").addEventListener("change", async e=>{
   const f = e.target.files[0]; if(!f) return;
   $("#cfg-photo-err").textContent = "";
@@ -1106,12 +1776,7 @@ $("#cfg-photo-file").addEventListener("change", async e=>{
       ph[k] = v; if(noms.includes(k)) pris++;
     });
     if(!pris) throw new Error(`Aucun nom de ce fichier ne correspond aux élèves de « ${cfgCls} ».`);
-    const avant = classes[cfgCls].photos;
-    classes[cfgCls].photos = ph;
-    if(!save(K_C, classes)){
-      if(avant) classes[cfgCls].photos = avant; else delete classes[cfgCls].photos;
-      throw new Error("Stockage saturé : les photos n'ont pas pu être enregistrées.");
-    }
+    if(!storePhotos(ph)) throw new Error("Stockage saturé : les photos n'ont pas pu être enregistrées.");
     photoState(); paintClassList();
   }catch(err){ $("#cfg-photo-err").textContent = err.message || "Fichier illisible."; }
   e.target.value = "";
@@ -1242,6 +1907,7 @@ function showCodes(){
     });
   });
   $("#send-photos").style.display = sess.pack ? "block" : "none";
+  $("#no-photos").style.display = sess.pack ? "none" : "block";
   step("#step-codes");
 }
 $("#zoom-close").addEventListener("click",()=>$("#zoom").classList.remove("on"));
@@ -1284,19 +1950,31 @@ $("#scan-go").addEventListener("click",()=>{ $("#recv-err").textContent=""; scan
 $("#paste-go").addEventListener("click",()=>{ if(takeReport($("#paste-r").value)) $("#paste-r").value=""; });
 
 /* ============ Roue de vérification des prises de notes ============
-   Jamais à l'ouverture : elle sert après la réception des relevés, pour aller
-   voir un cahier. Les deux observateurs et les absents sont hors du tirage —
-   les premiers ont déjà travaillé, les seconds ne sont pas là. */
-let wheelRot = 0, wheelTimer = null;
+   Accessible à tout moment depuis la barre du haut, avec partout la même règle :
+   les observateurs et les absents connus sont hors du tirage — les premiers ont
+   déjà travaillé, les seconds ne sont pas là. Ce qui change selon le moment,
+   c'est seulement ce qu'on sait déjà :
+   - séance ouverte : ses observateurs, et les absents des relevés déjà reçus ;
+   - séance de la classe choisie validée aujourd'hui : ses observateurs et absents ;
+   - sinon : toute la classe. */
+let wheelRot = 0, wheelTimer = null, wheelCls = null, wheelCands = [];
 function verifCounts(c){ return (classes[c] && classes[c].verif) || {}; }
-function wheelCandidates(){
-  const obs = [sess.A.obs, sess.B.obs], abs = new Set();
-  ["A","B"].forEach(p=>{ if(sess[p].rep) (sess[p].rep.abs||[]).forEach(i=>abs.add(i)); });
-  return sess.names.map((n,i)=>({n,i})).filter(o=>!obs.includes(o.n) && !abs.has(o.i));
+function wheelContext(){
+  if(sess){
+    const abs = new Set();
+    ["A","B"].forEach(p=>{ if(sess[p].rep) (sess[p].rep.abs||[]).forEach(i=>abs.add(i)); });
+    return {cls:sess.cls, names:sess.names, obs:[sess.A.obs, sess.B.obs], abs, src:"séance en cours"};
+  }
+  const cls = $("#cls").value;
+  if(!cls || !classes[cls]) return null;
+  const hs = history.filter(h=>h.cls===cls), h = hs[hs.length-1];
+  if(h && h.date===today())
+    return {cls, names:h.names, obs:[h.obsA, h.obsB], abs:new Set(h.abs||[]), src:"séance validée aujourd'hui"};
+  return {cls, names:namesOf(cls), obs:[], abs:new Set(), src:null};
 }
 /* Comme pour les observateurs : celui qu'on a le moins vérifié passe devant. */
 function pickVerif(cands){
-  const v = verifCounts(sess.cls);
+  const v = verifCounts(wheelCls);
   const w = cands.map(o=>Math.pow(1/(1+(v[o.n]||0)), 3));
   const tot = w.reduce((a,b)=>a+b,0);
   let r = Math.random()*tot, i = 0;
@@ -1321,48 +1999,132 @@ function wheelSvg(cands){
   out += `<circle cx="${cx}" cy="${cy}" r="15" fill="#fff" stroke="#C7D1D4" stroke-width="1.5"/></svg>`;
   return out;
 }
+const calme = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches);
 function openWheel(){
-  if(!sess) return;
-  const cands = wheelCandidates();
-  if(!cands.length){ alert("Personne à vérifier : tous les élèves sont observateurs ou absents."); return; }
+  const ctx = wheelContext();
+  if(!ctx){ alert("Créez d'abord une classe."); return; }
+  // les candidats sont figés à l'ouverture : un relevé reçu entre-temps ne doit
+  // pas décaler les parts sous l'aiguille
+  wheelCls = ctx.cls;
+  wheelCands = ctx.names.map((n,i)=>({n,i})).filter(o=>!ctx.obs.includes(o.n) && !ctx.abs.has(o.i));
+  if(!wheelCands.length){ alert("Personne à vérifier : tous les élèves sont observateurs ou absents."); return; }
+  const ecart = [];
+  if(ctx.obs.length) ecart.push("observateurs");
+  if(ctx.abs.size) ecart.push(`${ctx.abs.size} absent${ctx.abs.size>1?"s":""}`);
   wheelRot = 0;
+  $("#wheel-lbl").textContent = `Vérification des prises de notes · ${ctx.cls}`;
   $("#wheel-disc").className = "disc";
   $("#wheel-disc").style.transform = "rotate(0deg)";
-  $("#wheel-disc").innerHTML = wheelSvg(cands);
-  $("#wheel-res").innerHTML = `<p class="sub" style="margin:0">${cands.length} élève${cands.length>1?"s":""} dans la roue · observateurs et absents écartés</p>`;
+  $("#wheel-disc").innerHTML = wheelSvg(wheelCands);
+  $("#wheel-res").innerHTML = `<p class="sub" style="margin:0">${wheelCands.length} élève${wheelCands.length>1?"s":""} dans la roue` +
+    (ecart.length ? ` · ${ecart.join(" et ")} écartés (${ctx.src})` : " · toute la classe, aucune séance en cours") + `</p>`;
   $("#wheel-go").disabled = false;
   $("#wheel-go").textContent = "Tourner";
   $("#wheel").classList.add("on");
 }
 function spinWheel(){
-  const cands = wheelCandidates();
+  const cands = wheelCands;
   if(!cands.length) return;
   const k = pickVerif(cands);                 // décidé avant de tourner
   const N = cands.length;
   const disc = $("#wheel-disc");
-  const doux = !(window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches);
+  const doux = !calme();
   $("#wheel-go").disabled = true;
   $("#wheel-go").textContent = "…";
   $("#wheel-res").innerHTML = "";
   wheelRot += (doux ? 360*4 : 0) + (360 - ((wheelRot + (k+0.5)*360/N) % 360));
   disc.className = "disc" + (doux ? " tourne" : "");
   disc.style.transform = `rotate(${wheelRot}deg)`;
+  fireworks(3300);
   clearTimeout(wheelTimer);
   wheelTimer = setTimeout(()=>revealWheel(cands[k].n), doux ? 3500 : 0);
 }
 function revealWheel(nom){
-  const v = verifCounts(sess.cls), deja = v[nom] || 0;
+  const v = verifCounts(wheelCls), deja = v[nom] || 0;
   $("#wheel-res").innerHTML =
-    `${avatar(sess.cls, nom, true)}<div class="qui">${esc(nom)}</div>` +
+    `${avatar(wheelCls, nom, true)}<div class="qui">${esc(nom)}</div>` +
     `<p class="sub" style="margin:0;font-size:14px">${deja ? `déjà vérifié ${deja} fois cette année` : "jamais vérifié cette année"}</p>`;
-  if(!classes[sess.cls].verif) classes[sess.cls].verif = {};
-  classes[sess.cls].verif[nom] = deja + 1;
+  if(!classes[wheelCls].verif) classes[wheelCls].verif = {};
+  classes[wheelCls].verif[nom] = deja + 1;
   save(K_C, classes);
+  fxBouquet();
   $("#wheel-go").disabled = false;
   $("#wheel-go").textContent = "Tourner à nouveau";
 }
-function closeWheel(){ clearTimeout(wheelTimer); $("#wheel").classList.remove("on"); }
-["#wheel-open","#wheel-open2"].forEach(id=>$(id).addEventListener("click", openWheel));
+function closeWheel(){ clearTimeout(wheelTimer); fxStop(); $("#wheel").classList.remove("on"); }
+
+/* ---- Feu d'artifice pendant que la roue tourne ----
+   Purement décoratif, dessiné sur un canevas transparent posé par-dessus la roue,
+   qui laisse passer le toucher. Rien du tout si l'iPad demande moins d'animations. */
+const FX_COUL = ["#F2B705","#0E9F94","#E4572E","#7B61FF","#2E86DE","#E84393","#43B929"];
+const FX_G = 0.12;                              // gravité, en px par image²
+let fxParts = [], fxRaf = 0, fxLast = 0, fxUntil = 0, fxNext = 0;
+const fxCoul = () => FX_COUL[Math.floor(Math.random()*FX_COUL.length)];
+function fxCanvas(){
+  const cv = $("#wheel-fx"), d = window.devicePixelRatio || 1, w = innerWidth, h = innerHeight;
+  if(cv.width !== Math.round(w*d) || cv.height !== Math.round(h*d)){ cv.width = Math.round(w*d); cv.height = Math.round(h*d); }
+  const cx = cv.getContext("2d"); cx.setTransform(d,0,0,d,0,0);
+  return {cx, w, h};
+}
+function fxRocket(w, h){
+  const monte = h*(0.35 + 0.35*Math.random());  // hauteur d'éclatement
+  fxParts.push({x:w*(0.1+0.8*Math.random()), y:h+4, vx:(Math.random()-0.5)*1.4,
+                vy:-Math.sqrt(2*FX_G*monte), fusee:true, c:fxCoul(), r:2.2, t:0, max:1e9});
+}
+function fxBurst(x, y, n, force){
+  const c1 = fxCoul(), c2 = fxCoul();
+  for(let i=0; i<n; i++){
+    const a = Math.random()*2*Math.PI, v = force*(0.35 + 0.65*Math.random());
+    fxParts.push({x, y, vx:Math.cos(a)*v, vy:Math.sin(a)*v, c:Math.random()<0.7?c1:c2,
+                  r:1.6 + Math.random()*1.4, t:0, max:45 + Math.random()*35});
+  }
+}
+function fxLoop(now){
+  const {cx, w, h} = fxCanvas();
+  const k = Math.min(3, (now - fxLast)/16.7) || 1; fxLast = now;
+  if(now < fxUntil && now >= fxNext){ fxRocket(w, h); fxNext = now + 220 + Math.random()*320; }
+  // estompe l'image précédente plutôt que l'effacer : les étincelles laissent une traîne
+  cx.globalCompositeOperation = "destination-out";
+  cx.fillStyle = "rgba(0,0,0,.26)"; cx.fillRect(0, 0, w, h);
+  cx.globalCompositeOperation = "source-over";
+  const nes = [];
+  fxParts = fxParts.filter(p=>{
+    p.t += k; p.x += p.vx*k; p.y += p.vy*k;
+    if(p.fusee){
+      p.vy += FX_G*k;
+      if(p.vy >= -0.8){ nes.push(p); return false; }
+    }else{
+      p.vy += FX_G*0.45*k; p.vx *= Math.pow(0.975, k); p.vy *= Math.pow(0.975, k);
+      if(p.t >= p.max) return false;
+    }
+    cx.globalAlpha = p.fusee ? 1 : Math.max(0, 1 - p.t/p.max);
+    cx.fillStyle = p.c;
+    cx.beginPath(); cx.arc(p.x, p.y, p.r, 0, 2*Math.PI); cx.fill();
+    return true;
+  });
+  cx.globalAlpha = 1;
+  nes.forEach(p=>fxBurst(p.x, p.y, 55, 4.2));
+  if(now >= fxUntil && !fxParts.length){ cx.clearRect(0, 0, w, h); fxRaf = 0; return; }
+  fxRaf = requestAnimationFrame(fxLoop);
+}
+function fxRun(){ if(!fxRaf){ fxLast = performance.now(); fxRaf = requestAnimationFrame(fxLoop); } }
+function fireworks(ms){
+  if(calme()) return;
+  fxUntil = performance.now() + ms; fxNext = 0;
+  fxRun();
+}
+/* Le bouquet final, au moment où le nom apparaît. */
+function fxBouquet(){
+  if(calme()) return;
+  const w = innerWidth, h = innerHeight;
+  [[0.22,0.28],[0.5,0.16],[0.78,0.28]].forEach(([x,y])=>fxBurst(w*x, h*y, 80, 5.5));
+  fxRun();
+}
+function fxStop(){
+  cancelAnimationFrame(fxRaf); fxRaf = 0; fxParts = []; fxUntil = 0;
+  const {cx, w, h} = fxCanvas(); cx.clearRect(0, 0, w, h);
+}
+$("#wheel-nav").addEventListener("click", openWheel);
 $("#wheel-go").addEventListener("click", spinWheel);
 $("#wheel-close").addEventListener("click", closeWheel);
 

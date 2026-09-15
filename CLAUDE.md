@@ -61,7 +61,7 @@ node --check <(python3 -c "import re,pathlib;print(re.findall(r'<script>([\s\S]*
 |---|---|
 | `common.css` | Styles partagés par les deux pages |
 | `common.js` | Barème par défaut, modèles d'évaluation, encodage et décodage des charges QR, générateur et lecteur de QR |
-| `import.js` | Lecture `.xlsx` et `.csv`, détection de l'en-tête, mappage des colonnes, découpage `NOM Prénom` |
+| `import.js` | Lecture `.xlsx` et `.csv`, détection de l'en-tête, mappage des colonnes, découpage `NOM Prénom`, lecture du trombinoscope PDF |
 | `app-prof.js` | Toute la logique de l'application professeur |
 | `observateur.src.html` | Gabarit + logique de l'application observateur |
 | `professeur.src.html` | Gabarit de l'application professeur |
@@ -94,6 +94,12 @@ sont remplacés à la construction.
   transfert raté coûte plus cher en classe que trois secondes de défilé.
 - **L'empreinte de la planche est vérifiée à l'arrivée.** Sans elle, un fragment abîmé donne
   une image tronquée sans que personne s'en aperçoive.
+- **Trombinoscope École Directe.** C'est un PDF produit par WinDev, sans bibliothèque pour le
+  lire : on analyse la structure à la main, on décompresse les pages avec `DecompressionStream`
+  et on rattache à chaque photo (JPEG 96×128) le texte posé juste dessous, sur une ou deux
+  lignes. Les élèves sans photo reçoivent tous la même silhouette, un seul objet répété :
+  toute image posée plus d'une fois est écartée, sinon vingt élèves héritent d'une fausse
+  photo. Le rattachement passe toujours par un écran de vérification.
 - **Les photos ne quittent jamais l'appareil du professeur autrement que par QR.** Elles
   vivent dans `classes[cls].photos`, partent donc dans les sauvegardes, et sont effacées de
   l'iPad de l'élève par « Effacer et quitter » en fin de séance.

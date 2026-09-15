@@ -47,6 +47,17 @@
 #wheel-res{text-align:center;min-height:150px;display:flex;flex-direction:column;align-items:center;gap:8px}
 #wheel-res .qui{font-size:24px;font-weight:700;letter-spacing:-.02em}
 #wheel-res .ava{margin:0 auto}
+#wheel-fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+.tabs button.roue{flex:none;padding:9px 14px;color:var(--teal);background:var(--tealbg)}
+
+/* Photos : une vignette par élève, qu'on touche pour la remplacer */
+.phgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;margin:0 0 14px}
+.phgrid button{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 3px;
+  border:1.5px solid var(--line);border-radius:10px;font-size:12px;line-height:1.15;min-width:0}
+.phgrid button:active{background:var(--tealbg);border-color:var(--teal)}
+.phgrid .ava{width:48px;height:64px}
+.phgrid .nmp{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cache{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 </style>
 </head>
 <body>
@@ -55,6 +66,7 @@
   <button data-t="#t-seance" class="on">Séance</button>
   <button data-t="#t-suivi">Suivi</button>
   <button data-t="#t-classes">Classes</button>
+  <button id="wheel-nav" class="roue" title="Vérifier une prise de notes">Roue</button>
 </nav>
 
 <!-- ================= SÉANCE ================= -->
@@ -96,6 +108,7 @@
         </div>
       </details>
       <button class="btn btn-teal" id="send-photos" style="display:none">Envoyer les photos aux observateurs</button>
+      <p class="sub" id="no-photos" style="display:none;font-size:14px">Aucune photo pour cette classe au moment de l'ouverture : les observateurs verront seulement les noms. Les photos s'ajoutent dans l'onglet Classes, avant d'ouvrir la séance.</p>
       <button class="btn" id="to-recv">Passer à la réception</button>
       <button class="btn btn-ghost" id="redraw">Retirer au sort</button>
       <button class="btn btn-ghost" id="cancel-sess">Annuler la séance</button>
@@ -114,7 +127,6 @@
         <textarea id="paste-r" placeholder="Coller le relevé" spellcheck="false" style="margin-top:8px"></textarea>
         <button class="btn btn-ghost" id="paste-go">Ajouter ce relevé</button>
       </details>
-      <button class="btn btn-teal" id="wheel-open">Vérifier une prise de notes</button>
       <button class="btn" id="to-sum" disabled>Voir la synthèse</button>
       <button class="btn btn-ghost" id="back-codes">Revoir les codes</button>
     </div>
@@ -135,7 +147,6 @@
           <option value="half">Retenir la moitié des points isolés</option>
         </select>
       </div>
-      <button class="btn btn-ghost" id="wheel-open2">Vérifier une autre prise de notes</button>
       <button class="btn btn-teal" id="validate">Valider et enregistrer</button>
       <button class="btn btn-ghost" id="discard">Abandonner cette séance</button>
     </div>
@@ -304,15 +315,26 @@
         <input type="text" id="cfg-obj" inputmode="numeric">
       </div>
       <h3 style="margin-bottom:8px">Photos des élèves</h3>
-      <p class="help">Les photos restent sur cet appareil et dans vos sauvegardes. Elles ne
-        partent jamais vers les iPads des observateurs : un QR code ne peut pas les porter.</p>
+      <p class="help">Touchez un élève pour choisir sa photo, dans la photothèque ou avec
+        l'appareil photo. Pour aller plus vite, importez le trombinoscope PDF d'École Directe :
+        chaque photo est rattachée au nom écrit dessous, et vous vérifiez avant d'enregistrer.
+        Des images nommées comme les élèves (« DUPONT Marie.jpg ») marchent aussi. Les photos restent sur cet appareil et dans vos
+        sauvegardes ; à chaque séance, elles partent vers les deux observateurs par une série de
+        QR codes, et sont effacées de leur iPad en fin de séance.</p>
       <div class="card">
         <p class="sub" style="margin:0 0 10px;font-size:14.5px" id="cfg-photo-etat">—</p>
-        <label class="help" for="cfg-photo-file">Importer un fichier photos</label>
-        <input type="file" id="cfg-photo-file" accept="application/json" style="margin:6px 0 12px">
-        <button class="btn btn-ghost" id="cfg-photo-exp" style="margin:0 0 8px">Exporter le fichier photos</button>
+        <div class="phgrid" id="cfg-photo-grid"></div>
+        <input type="file" id="cfg-photo-one" accept="image/*" class="cache">
+        <label class="help" for="cfg-photo-imgs">Importer le trombinoscope École Directe (PDF), ou des images nommées comme les élèves</label>
+        <input type="file" id="cfg-photo-imgs" accept="application/pdf,.pdf,image/*" multiple style="margin:6px 0 12px">
+        <p class="err" id="cfg-photo-err" style="margin:0 0 10px"></p>
+        <details style="margin-bottom:10px">
+          <summary style="padding:6px 0;color:var(--soft);font-size:15px">Fichier photos, pour passer d'un appareil à l'autre</summary>
+          <label class="help" for="cfg-photo-file" style="display:block;margin-top:8px">Importer un fichier photos</label>
+          <input type="file" id="cfg-photo-file" accept="application/json" style="margin:6px 0 12px">
+          <button class="btn btn-ghost" id="cfg-photo-exp" style="margin:0">Exporter le fichier photos</button>
+        </details>
         <button class="btn btn-ghost" id="cfg-photo-del" style="margin:0">Retirer les photos de cette classe</button>
-        <p class="err" id="cfg-photo-err" style="margin:8px 0 0"></p>
       </div>
 
       <button class="btn btn-ghost" id="cfg-edit-list">Modifier la liste des élèves</button>
@@ -335,8 +357,23 @@
   </div>
 </div>
 
+<div class="plein" id="trombi">
+  <div class="wrap">
+    <h1>Trombinoscope</h1>
+    <p class="sub" id="trombi-sub">—</p>
+    <div id="trombi-alerte"></div>
+    <div class="note">Chaque photo est rattachée à l'élève dont le nom ressemble le plus au texte lu dans le PDF, même si quelques lettres ont été mal lues. Cadre orangé : à vérifier. Cadre rouge : aucun élève trouvé. Rien n'est enregistré avant que vous validiez.</div>
+    <div class="tbl" id="trombi-tbl"></div>
+    <p class="sub" id="trombi-sans" style="font-size:14px"></p>
+    <p class="err" id="trombi-err"></p>
+    <button class="btn btn-teal" id="trombi-ok">Enregistrer ces photos</button>
+    <button class="btn btn-ghost" id="trombi-close">Annuler</button>
+  </div>
+</div>
+
 <div class="zoom" id="wheel">
-  <div class="lbl">Vérification des prises de notes</div>
+  <canvas id="wheel-fx"></canvas>
+  <div class="lbl" id="wheel-lbl">Vérification des prises de notes</div>
   <div class="wheelbox"><div class="pointer"></div><div class="disc" id="wheel-disc"></div></div>
   <div id="wheel-res"></div>
   <div class="row" style="gap:10px;max-width:380px;width:100%">
