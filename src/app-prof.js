@@ -16,6 +16,11 @@ if(!classes){
   }
   save(K_C, classes);
 }
+// la première roue comptait chaque tour, validé ou non : ce compteur ne veut rien dire
+if(Object.values(classes).some(c=>c && c.verif)){
+  Object.values(classes).forEach(c=>{ if(c) delete c.verif; });
+  save(K_C, classes);
+}
 let history = load(K_H, []);
 let sess = load(K_S, null);
 let merged=null, scanner=null, curPoste="A", arb={}, adj={}, sumOrder=null;
@@ -237,11 +242,11 @@ function paintModels(){
   $$("#c-models .card").forEach(b=>b.addEventListener("click",()=>{
     if(classes[draft.name] && !confirm(`La classe « ${draft.name} » existe déjà. La remplacer ?`)) return;
     // remplacer la liste ne doit pas faire refaire le trombinoscope : photos et
-    // compteur de vérifications restent, rattachés par nom
+    // compteurs de la roue restent, rattachés par nom
     const avant = classes[draft.name] || {};
     classes[draft.name]={names:draft.names, cfg:defaultCfg(b.dataset.m)};
     if(avant.photos) classes[draft.name].photos = avant.photos;
-    if(avant.verif)  classes[draft.name].verif  = avant.verif;
+    ["tirages","tiragesPasses","absJour"].forEach(k=>{ if(avant[k]) classes[draft.name][k] = avant[k]; });
     save(K_C,classes); fillClassSelects();
     openCfg(draft.name);
   }));
@@ -752,29 +757,48 @@ $("#paste-go").addEventListener("click",()=>{ if(takeReport($("#paste-r").value)
    - séance ouverte : ses observateurs, et les absents des relevés déjà reçus ;
    - séance de la classe choisie validée aujourd'hui : ses observateurs et absents ;
    - sinon : toute la classe. */
-let wheelRot = 0, wheelTimer = null, wheelCls = null, wheelCands = [];
-function verifCounts(c){ return (classes[c] && classes[c].verif) || {}; }
+let wheelRot = 0, wheelTimer = null, wheelCtx = null, wheelCands = [], wheelPick = null, wheelSpin = false;
+/* Règle du tirage, sur une période :
+   - un tirage ne compte que s'il est validé, comme l'ouverture d'une séance pour
+     les observateurs : on peut tourner pour rien, relancer sans compter, ou
+     écarter l'élève tombé s'il est absent ;
+   - on ne retombe pas tant que tous les présents ne sont pas tombés autant de
+     fois que soi : seuls ceux qui ont le moins de tirages validés sont dans la roue ;
+   - deux tirages validés au plus par élève sur la période.
+   Un absent ne bloque pas les autres : son compteur l'attend, il rentre dans la
+   roue dès son retour. Les compteurs se corrigent à la main dans le tableau. */
+const PLAFOND_TIRAGES = 2;
+const tiragesOf = c => (classes[c] && classes[c].tirages) || {};
+function absJour(c){
+  const a = classes[c] && classes[c].absJour;
+  return a && a.date === today() ? a.noms : [];
+}
+function toggleAbsJour(c, nom){
+  const k = classes[c];
+  if(!k.absJour || k.absJour.date !== today()) k.absJour = {date:today(), noms:[]};
+  const a = k.absJour.noms, i = a.indexOf(nom);
+  if(i < 0) a.push(nom); else a.splice(i, 1);
+  save(K_C, classes);
+}
 function wheelContext(){
   if(sess){
     const abs = new Set();
     ["A","B"].forEach(p=>{ if(sess[p].rep) (sess[p].rep.abs||[]).forEach(i=>abs.add(i)); });
-    return {cls:sess.cls, names:sess.names, obs:[sess.A.obs, sess.B.obs], abs, src:"séance en cours"};
+    return {cls:sess.cls, names:sess.names, obs:[sess.A.obs, sess.B.obs], abs};
   }
   const cls = $("#cls").value;
   if(!cls || !classes[cls]) return null;
   const hs = history.filter(h=>h.cls===cls), h = hs[hs.length-1];
-  if(h && h.date===today())
-    return {cls, names:h.names, obs:[h.obsA, h.obsB], abs:new Set(h.abs||[]), src:"séance validée aujourd'hui"};
-  return {cls, names:namesOf(cls), obs:[], abs:new Set(), src:null};
+  if(h && h.date===today()) return {cls, names:h.names, obs:[h.obsA, h.obsB], abs:new Set(h.abs||[])};
+  return {cls, names:namesOf(cls), obs:[], abs:new Set()};
 }
-/* Comme pour les observateurs : celui qu'on a le moins vérifié passe devant. */
-function pickVerif(cands){
-  const v = verifCounts(wheelCls);
-  const w = cands.map(o=>Math.pow(1/(1+(v[o.n]||0)), 3));
-  const tot = w.reduce((a,b)=>a+b,0);
-  let r = Math.random()*tot, i = 0;
-  for(; i<cands.length; i++){ r -= w[i]; if(r<=0) break; }
-  return Math.min(i, cands.length-1);
+function wheelState(){
+  const ctx = wheelCtx, v = tiragesOf(ctx.cls), man = absJour(ctx.cls);
+  const rows = ctx.names.map((n,i)=>({n, i, c:v[n]||0, obs:ctx.obs.includes(n), absR:ctx.abs.has(i), absM:man.includes(n)}));
+  const presents = rows.filter(r=>!r.obs && !r.absR && !r.absM);
+  const elig = presents.filter(r=>r.c < PLAFOND_TIRAGES);
+  const min = elig.length ? Math.min(...elig.map(r=>r.c)) : 0;
+  return {rows, presents, elig, cands: elig.filter(r=>r.c===min)};
 }
 function wheelSvg(cands){
   const N = cands.length, R = 150, cx = 160, cy = 160;
@@ -783,10 +807,13 @@ function wheelSvg(cands){
   let out = `<svg viewBox="0 0 320 320" style="width:100%;height:auto;display:block">`;
   cands.forEach((o,k)=>{
     const a0 = (k/N)*2*Math.PI - Math.PI/2, a1 = ((k+1)/N)*2*Math.PI - Math.PI/2;
-    const x0 = cx+R*Math.cos(a0), y0 = cy+R*Math.sin(a0);
-    const x1 = cx+R*Math.cos(a1), y1 = cy+R*Math.sin(a1);
-    const grand = (a1-a0) > Math.PI ? 1 : 0;
-    out += `<path d="M${cx},${cy} L${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 ${grand},1 ${x1.toFixed(1)},${y1.toFixed(1)} Z" fill="${teintes[k%4]}" stroke="#fff" stroke-width="1.5"/>`;
+    if(N === 1) out += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="${teintes[0]}"/>`;   // un arc de 360° ne se dessine pas
+    else{
+      const x0 = cx+R*Math.cos(a0), y0 = cy+R*Math.sin(a0);
+      const x1 = cx+R*Math.cos(a1), y1 = cy+R*Math.sin(a1);
+      const grand = (a1-a0) > Math.PI ? 1 : 0;
+      out += `<path d="M${cx},${cy} L${x0.toFixed(1)},${y0.toFixed(1)} A${R},${R} 0 ${grand},1 ${x1.toFixed(1)},${y1.toFixed(1)} Z" fill="${teintes[k%4]}" stroke="#fff" stroke-width="1.5"/>`;
+    }
     const am = (a0+a1)/2, tr = R*0.63;
     const tx = cx+tr*Math.cos(am), ty = cy+tr*Math.sin(am);
     out += `<text x="${tx.toFixed(1)}" y="${ty.toFixed(1)}" transform="rotate(${(am*180/Math.PI).toFixed(1)} ${tx.toFixed(1)} ${ty.toFixed(1)})" font-size="${petit?9.5:12}" font-weight="600" fill="#15242B" text-anchor="middle" dominant-baseline="middle">${esc(o.n)}</text>`;
@@ -798,35 +825,96 @@ const calme = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-
 function openWheel(){
   const ctx = wheelContext();
   if(!ctx){ alert("Créez d'abord une classe."); return; }
-  // les candidats sont figés à l'ouverture : un relevé reçu entre-temps ne doit
-  // pas décaler les parts sous l'aiguille
-  wheelCls = ctx.cls;
-  wheelCands = ctx.names.map((n,i)=>({n,i})).filter(o=>!ctx.obs.includes(o.n) && !ctx.abs.has(o.i));
-  if(!wheelCands.length){ alert("Personne à vérifier : tous les élèves sont observateurs ou absents."); return; }
-  const ecart = [];
-  if(ctx.obs.length) ecart.push("observateurs");
-  if(ctx.abs.size) ecart.push(`${ctx.abs.size} absent${ctx.abs.size>1?"s":""}`);
-  wheelRot = 0;
+  wheelCtx = ctx; wheelPick = null; wheelSpin = false; wheelRot = 0;
   $("#wheel-lbl").textContent = `Vérification des prises de notes · ${ctx.cls}`;
   $("#wheel-disc").className = "disc";
   $("#wheel-disc").style.transform = "rotate(0deg)";
-  $("#wheel-disc").innerHTML = wheelSvg(wheelCands);
-  $("#wheel-res").innerHTML = `<p class="sub" style="margin:0">${wheelCands.length} élève${wheelCands.length>1?"s":""} dans la roue` +
-    (ecart.length ? ` · ${ecart.join(" et ")} écartés (${ctx.src})` : " · toute la classe, aucune séance en cours") + `</p>`;
-  $("#wheel-go").disabled = false;
-  $("#wheel-go").textContent = "Tourner";
-  $("#wheel").classList.add("on");
+  paintWheel();
+  $("#wheel").classList.add("on"); $("#wheel").scrollTop = 0;
+}
+/* Redessine la roue, les boutons et le tableau à partir des compteurs. */
+function paintWheel(){
+  const st = wheelState();
+  wheelCands = st.cands;
+  $("#wheel-disc").innerHTML = wheelCands.length ? wheelSvg(wheelCands) : "";
+  if(!wheelPick && !wheelSpin){
+    const ecart = [];
+    if(wheelCtx.obs.length) ecart.push("observateurs");
+    const nAbs = st.rows.filter(r=>r.absR || r.absM).length;
+    if(nAbs) ecart.push(`${nAbs} absent${nAbs>1?"s":""}`);
+    const attente = st.elig.length - wheelCands.length;
+    $("#wheel-res").innerHTML = wheelCands.length
+      ? `<p class="sub" style="margin:0">${wheelCands.length} élève${wheelCands.length>1?"s":""} dans la roue` +
+        (attente ? ` · ${attente} déjà tombé${attente>1?"s":""}, en attente que tout le monde passe` : "") +
+        (ecart.length ? ` · écartés : ${ecart.join(" et ")}` : "") + `</p>`
+      : `<p class="err" style="margin:0">${st.presents.length
+          ? `Tous les élèves présents sont tombés ${PLAFOND_TIRAGES} fois cette période.`
+          : "Personne dans la roue : tous les élèves sont observateurs ou absents."}</p>`;
+  }
+  wheelButtons();
+  paintTally(st);
+}
+function wheelButtons(){
+  const b = (id, k, txt, off) => `<button class="btn ${k}" id="${id}" style="margin:0"${off?" disabled":""}>${txt}</button>`;
+  $("#wheel-actions").innerHTML = (wheelPick
+      ? b("wheel-ok", "btn-teal", "Valider le tirage") + b("wheel-abs", "btn-ghost", "Absent : l'écarter") +
+        b("wheel-go", "btn-ghost", "Relancer sans compter")
+      : b("wheel-go", "btn-teal", wheelSpin ? "…" : "Tourner", wheelSpin || !wheelCands.length)) +
+    b("wheel-close", "btn-ghost", "Fermer");
+  const on = (id, f) => { const e = $("#"+id); if(e) e.addEventListener("click", f); };
+  on("wheel-go", spinWheel); on("wheel-ok", validateDraw); on("wheel-abs", absentDraw); on("wheel-close", closeWheel);
+}
+function paintTally(st){
+  const cands = new Set(wheelCands.map(o=>o.n)), gele = wheelSpin ? " disabled" : "";
+  $("#wheel-tally").innerHTML = `
+    <strong>Tirages validés de la période</strong>
+    <p class="sub" style="margin:2px 0 10px;font-size:13.5px">${PLAFOND_TIRAGES} au maximum par élève. On ne retombe qu'une fois tous les présents passés. Surligné : dans la roue.</p>
+    <div class="tbl">${st.rows.map(r=>`
+      <div class="r${r.n===wheelPick ? " pick" : cands.has(r.n) ? " cand" : ""}">
+        <span class="nm">${esc(r.n)}</span>
+        ${r.obs ? `<span class="pill ok">obs.</span>`
+          : r.absR ? `<span class="pill solo">abs.</span>`
+          : `<button class="pill${r.absM?" solo":""}" data-ab="${r.i}" style="padding:6px 10px"${gele}>${r.absM ? "abs." : "présent"}</button>`}
+        <span class="ctrl">
+          <button class="adj" data-tm="${r.i}"${gele || (r.c<=0 ? " disabled" : "")}>−</button>
+          <span class="v">${r.c}</span>
+          <button class="adj" data-tp="${r.i}"${gele || (r.c>=PLAFOND_TIRAGES ? " disabled" : "")}>+</button>
+        </span>
+      </div>`).join("")}
+    </div>
+    <button class="btn btn-ghost" id="wheel-reset" style="margin:0"${gele}>Nouvelle période : compteurs à zéro</button>`;
+  const cls = wheelCtx.cls, nomDe = i => wheelCtx.names[+i];
+  const apres = nom => { if(nom === wheelPick) wheelPick = null; paintWheel(); };
+  $$("#wheel-tally [data-ab]").forEach(e=>e.addEventListener("click",()=>{
+    const nom = nomDe(e.dataset.ab); toggleAbsJour(cls, nom); apres(nom);
+  }));
+  $$("#wheel-tally [data-tm], #wheel-tally [data-tp]").forEach(e=>e.addEventListener("click",()=>{
+    const plus = e.dataset.tp !== undefined, nom = nomDe(plus ? e.dataset.tp : e.dataset.tm);
+    const t = classes[cls].tirages || (classes[cls].tirages = {});
+    t[nom] = Math.max(0, Math.min(PLAFOND_TIRAGES, (t[nom]||0) + (plus ? 1 : -1)));
+    if(!t[nom]) delete t[nom];
+    save(K_C, classes); apres(nom);
+  }));
+  $("#wheel-reset").addEventListener("click",()=>{
+    if(!confirm(`Nouvelle période pour « ${cls} » : tous les compteurs de tirages repartent à zéro. L'ancien décompte est archivé dans les sauvegardes. Continuer ?`)) return;
+    const k = classes[cls];
+    k.tiragesPasses = (k.tiragesPasses || []).concat([{fin:today(), tirages:k.tirages || {}}]);
+    k.tirages = {};
+    save(K_C, classes); wheelPick = null; paintWheel();
+  });
 }
 function spinWheel(){
+  if(wheelSpin) return;
+  wheelPick = null;
+  paintWheel();                               // la roue du moment, compteurs à jour
   const cands = wheelCands;
   if(!cands.length) return;
-  const k = pickVerif(cands);                 // décidé avant de tourner
-  const N = cands.length;
-  const disc = $("#wheel-disc");
-  const doux = !calme();
-  $("#wheel-go").disabled = true;
-  $("#wheel-go").textContent = "…";
+  // même chance pour tous ceux de la roue : l'équité est déjà dans la règle
+  const k = Math.floor(Math.random()*cands.length), N = cands.length;
+  const disc = $("#wheel-disc"), doux = !calme();
+  wheelSpin = true;
   $("#wheel-res").innerHTML = "";
+  wheelButtons(); paintTally(wheelState());
   wheelRot += (doux ? 360*4 : 0) + (360 - ((wheelRot + (k+0.5)*360/N) % 360));
   disc.className = "disc" + (doux ? " tourne" : "");
   disc.style.transform = `rotate(${wheelRot}deg)`;
@@ -835,18 +923,33 @@ function spinWheel(){
   wheelTimer = setTimeout(()=>revealWheel(cands[k].n), doux ? 3500 : 0);
 }
 function revealWheel(nom){
-  const v = verifCounts(wheelCls), deja = v[nom] || 0;
+  wheelSpin = false; wheelPick = nom;
+  const c = tiragesOf(wheelCtx.cls)[nom] || 0;
   $("#wheel-res").innerHTML =
-    `${avatar(wheelCls, nom, true)}<div class="qui">${esc(nom)}</div>` +
-    `<p class="sub" style="margin:0;font-size:14px">${deja ? `déjà vérifié ${deja} fois cette année` : "jamais vérifié cette année"}</p>`;
-  if(!classes[wheelCls].verif) classes[wheelCls].verif = {};
-  classes[wheelCls].verif[nom] = deja + 1;
-  save(K_C, classes);
+    `${avatar(wheelCtx.cls, nom, true)}<div class="qui">${esc(nom)}</div>` +
+    `<p class="sub" style="margin:0;font-size:14px">${c ? `déjà tombé ${c} fois cette période` : "pas encore tombé cette période"} · ne compte qu'une fois validé</p>`;
   fxBouquet();
-  $("#wheel-go").disabled = false;
-  $("#wheel-go").textContent = "Tourner à nouveau";
+  wheelButtons(); paintTally(wheelState());
 }
-function closeWheel(){ clearTimeout(wheelTimer); fxStop(); $("#wheel").classList.remove("on"); }
+function validateDraw(){
+  const cls = wheelCtx.cls, nom = wheelPick;
+  if(!nom) return;
+  const t = classes[cls].tirages || (classes[cls].tirages = {});
+  t[nom] = (t[nom] || 0) + 1;
+  if(!save(K_C, classes)){ t[nom]--; alert("Enregistrement impossible : stockage saturé."); return; }
+  wheelPick = null; paintWheel();
+  $("#wheel-res").innerHTML =
+    `${avatar(cls, nom, true)}<div class="qui">${esc(nom)}</div>` +
+    `<p style="margin:0;font-size:14px;color:var(--teal);font-weight:650">Tirage validé · ${t[nom]} fois cette période</p>`;
+}
+function absentDraw(){
+  const nom = wheelPick;
+  if(!nom) return;
+  toggleAbsJour(wheelCtx.cls, nom);
+  wheelPick = null; paintWheel();
+  $("#wheel-res").innerHTML = `<p class="sub" style="margin:0">Absence notée pour ${esc(nom)} : sortie de la roue pour aujourd'hui. Rien n'est compté.</p>`;
+}
+function closeWheel(){ clearTimeout(wheelTimer); wheelSpin = false; wheelPick = null; fxStop(); $("#wheel").classList.remove("on"); }
 
 /* ---- Feu d'artifice pendant que la roue tourne ----
    Purement décoratif, dessiné sur un canevas transparent posé par-dessus la roue,
@@ -920,8 +1023,6 @@ function fxStop(){
   const {cx, w, h} = fxCanvas(); cx.clearRect(0, 0, w, h);
 }
 $("#wheel-nav").addEventListener("click", openWheel);
-$("#wheel-go").addEventListener("click", spinWheel);
-$("#wheel-close").addEventListener("click", closeWheel);
 
 /* ============ Fusion ============ */
 function mergeSession(){
