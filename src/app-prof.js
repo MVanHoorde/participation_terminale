@@ -837,20 +837,19 @@ function paintWheel(){
   const st = wheelState();
   wheelCands = st.cands;
   $("#wheel-disc").innerHTML = wheelCands.length ? wheelSvg(wheelCands) : "";
-  if(!wheelPick && !wheelSpin){
-    const ecart = [];
-    if(wheelCtx.obs.length) ecart.push("observateurs");
-    const nAbs = st.rows.filter(r=>r.absR || r.absM).length;
-    if(nAbs) ecart.push(`${nAbs} absent${nAbs>1?"s":""}`);
-    const attente = st.elig.length - wheelCands.length;
-    $("#wheel-res").innerHTML = wheelCands.length
+  const ecart = [];
+  if(wheelCtx.obs.length) ecart.push("observateurs");
+  const nAbs = st.rows.filter(r=>r.absR || r.absM).length;
+  if(nAbs) ecart.push(`${nAbs} absent${nAbs>1?"s":""}`);
+  const attente = st.elig.length - wheelCands.length;
+  $("#wheel-info").innerHTML = wheelCands.length
       ? `<p class="sub" style="margin:0">${wheelCands.length} élève${wheelCands.length>1?"s":""} dans la roue` +
         (attente ? ` · ${attente} déjà tombé${attente>1?"s":""}, en attente que tout le monde passe` : "") +
         (ecart.length ? ` · écartés : ${ecart.join(" et ")}` : "") + `</p>`
       : `<p class="err" style="margin:0">${st.presents.length
           ? `Tous les élèves présents sont tombés ${PLAFOND_TIRAGES} fois cette période.`
           : "Personne dans la roue : tous les élèves sont observateurs ou absents."}</p>`;
-  }
+  if(!wheelPick && !wheelSpin) $("#wheel-res").innerHTML = "";
   wheelButtons();
   paintTally(st);
 }
@@ -867,7 +866,6 @@ function wheelButtons(){
 function paintTally(st){
   const cands = new Set(wheelCands.map(o=>o.n)), gele = wheelSpin ? " disabled" : "";
   $("#wheel-tally").innerHTML = `
-    <strong>Tirages validés de la période</strong>
     <p class="sub" style="margin:2px 0 10px;font-size:13.5px">${PLAFOND_TIRAGES} au maximum par élève. On ne retombe qu'une fois tous les présents passés. Surligné : dans la roue.</p>
     <div class="tbl">${st.rows.map(r=>`
       <div class="r${r.n===wheelPick ? " pick" : cands.has(r.n) ? " cand" : ""}">
@@ -949,7 +947,21 @@ function absentDraw(){
   wheelPick = null; paintWheel();
   $("#wheel-res").innerHTML = `<p class="sub" style="margin:0">Absence notée pour ${esc(nom)} : sortie de la roue pour aujourd'hui. Rien n'est compté.</p>`;
 }
-function closeWheel(){ clearTimeout(wheelTimer); wheelSpin = false; wheelPick = null; fxStop(); $("#wheel").classList.remove("on"); }
+function closeWheel(){
+  clearTimeout(wheelTimer); wheelSpin = false; wheelPick = null; fxStop();
+  $("#wheel-drawer").classList.remove("on");
+  $("#wheel").classList.remove("on");
+}
+/* Le tableau des compteurs est rangé sur le côté : la roue garde toute la place. */
+function toggleDrawer(ouvrir){
+  const on = ouvrir === undefined ? !$("#wheel-drawer").classList.contains("on") : ouvrir;
+  $("#wheel-drawer").classList.toggle("on", on);
+  $("#wheel-drawer-btn").setAttribute("aria-expanded", on);
+}
+$("#wheel-drawer-btn").addEventListener("click", ()=>toggleDrawer());
+$("#wheel-drawer-close").addEventListener("click", ()=>toggleDrawer(false));
+// une fois lu, le résultat se range d'un toucher pour revoir la roue
+$("#wheel-res").addEventListener("click", ()=>{ if(!wheelPick && !wheelSpin) $("#wheel-res").innerHTML = ""; });
 
 /* ---- Feu d'artifice pendant que la roue tourne ----
    Purement décoratif, dessiné sur un canevas transparent posé par-dessus la roue,
