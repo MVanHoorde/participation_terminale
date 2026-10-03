@@ -41,6 +41,12 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
 .scan video{width:100%;height:100%;object-fit:cover;display:block}
 .scan .frame{position:absolute;inset:14%;border:3px solid rgba(255,255,255,.85);border-radius:12px;pointer-events:none}
 .scan canvas{display:none}
+.scan{touch-action:pan-y}
+.zoomctl{display:flex;align-items:center;gap:12px;margin:-2px 0 12px;font-size:15px;color:var(--soft)}
+.zoomctl[hidden]{display:none}
+.zoomctl input{flex:1;min-width:0;accent-color:var(--teal);height:32px}
+.zoomctl output{min-width:3.4em;text-align:right;font-variant-numeric:tabular-nums;color:var(--ink);font-weight:600}
+.cache{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .qrbox{background:#fff;border-radius:var(--r);padding:14px;margin-bottom:12px}
 .qrbox svg{width:100%;height:auto;display:block;shape-rendering:crispEdges}
 

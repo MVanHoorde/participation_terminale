@@ -84,25 +84,25 @@ sont remplacés à la construction.
 - **Le `localStorage` est cloisonné par origine**, pas par dossier. Ce site doit vivre sur une
   origine qui lui est propre.
 - **Changer d'URL fait perdre les données.** Exporter une sauvegarde avant toute migration.
-- **Les photos passent par une planche unique, pas par 21 fichiers.** Un seul JPEG en
-  grille de sept colonnes, cellules de 48×64, découpé à l'affichage avec
-  `background-position`. Vingt et une images séparées pèsent 19,8 Ko contre 13,3 Ko pour la
-  planche : l'écart, ce sont vingt en-têtes JPEG en trop.
-- **Fragments de 900 caractères.** C'est ce qui maintient chaque QR en version 22, soit
-  105 modules — la densité qui se lit de façon fiable d'un iPad à l'autre. Un QR version 40
-  diviserait le nombre de fragments par trois mais devient capricieux à la lecture, et un
-  transfert raté coûte plus cher en classe que trois secondes de défilé.
-- **L'empreinte de la planche est vérifiée à l'arrivée.** Sans elle, un fragment abîmé donne
-  une image tronquée sans que personne s'en aperçoive.
 - **Trombinoscope École Directe.** C'est un PDF produit par WinDev, sans bibliothèque pour le
   lire : on analyse la structure à la main, on décompresse les pages avec `DecompressionStream`
   et on rattache à chaque photo (JPEG 96×128) le texte posé juste dessous, sur une ou deux
   lignes. Les élèves sans photo reçoivent tous la même silhouette, un seul objet répété :
   toute image posée plus d'une fois est écartée, sinon vingt élèves héritent d'une fausse
   photo. Le rattachement passe toujours par un écran de vérification.
-- **Les photos ne quittent jamais l'appareil du professeur autrement que par QR.** Elles
-  vivent dans `classes[cls].photos`, partent donc dans les sauvegardes, et sont effacées de
-  l'iPad de l'élève par « Effacer et quitter » en fin de séance.
+- **Les photos ne quittent jamais l'appareil du professeur.** Elles vivent dans
+  `classes[cls].photos` et partent donc dans les sauvegardes. Leur envoi aux observateurs par
+  une série de QR défilants a été abandonné : trop lent en classe. Le champ `planche` du QR de
+  séance reste dans le format, toujours vide, pour que deux versions des pages se comprennent.
+- **Caméra sur iPad.** Juste après l'autorisation, iOS interrompt souvent le premier `play()`
+  de la vidéo (`AbortError`) alors que le flux est bon : on réessaie au lieu de couper. iOS
+  coupe aussi le flux quand l'iPad se verrouille ou qu'on change d'application, et le suspend
+  quand Safari partage l'écran (Split View, Stage Manager) : pastille allumée, image noire. Un
+  seul onglet à la fois peut tenir la caméra. Repli : « Photographier le QR code », qui passe
+  par l'appareil photo d'iOS et décode la photo.
+- **Lecture des QR.** On demande une image 1920×1080, réduite à 1024 px de côté pour `jsQR`,
+  et un passage sur deux on n'analyse que le centre agrandi deux fois. Le zoom passe par la
+  contrainte `zoom` de la piste quand Safari la propose, sinon il est numérique.
 
 ## Formats des charges QR
 
@@ -110,8 +110,6 @@ sont remplacés à la construction.
   `PVS3|jeton|poste|classe|date|plafond|barème|planche|noms`
 - Relevé, de l'observateur vers le professeur :
   `PVR2|jeton|départ|évènements|absents`
-- Planche de photos, du professeur vers l'observateur, en fragments :
-  `PVP1|planche|index|total|données base64`
 
 Toute modification de ces formats casse la compatibilité entre les deux pages : incrémenter le
 numéro de version et adapter les deux côtés dans le même commit.
@@ -123,8 +121,7 @@ numéro de version et adapter les deux côtés dans le même commit.
    sont en clair. C'est le point le plus important.
 2. **Notion de période** — l'objectif est dit « de période » mais le suivi cumule toute
    l'année. Il faut des bornes : remise à zéro des points, report du compteur de rôles.
-3. **Purge automatique** du relevé sur l'iPad de l'élève après transmission. Les photos, elles,
-   partent déjà avec « Effacer et quitter ».
+3. **Purge automatique** du relevé sur l'iPad de l'élève après transmission.
 4. **Verrouillage automatique** de la page professeur après quelques minutes d'inactivité.
 5. **Fusion d'élève** quand l'orthographe d'un nom déjà enregistré est corrigée : son historique
    se détache aujourd'hui.

@@ -309,10 +309,10 @@ $("#cfg-save").addEventListener("click",()=>{
 });
 /* ============ Photos de la classe ============
    Elles vivent dans classes[cls].photos, donc elles partent dans la sauvegarde
-   et en reviennent. Vers les observateurs, elles ne voyagent qu'assemblées en
-   planche et découpées en fragments QR, à l'ouverture d'une séance. */
+   et en reviennent. Elles ne quittent jamais cet appareil autrement : l'envoi
+   aux observateurs par une série de QR a été abandonné, trop lent en classe. */
 const PHOTO_FMT = "participation-photos-v1";
-const PHOTO_W = 96, PHOTO_H = 128;   // double de la cellule de planche : net sur écran Retina
+const PHOTO_W = 96, PHOTO_H = 128;   // nettes sur écran Retina
 let photoFor = null;                  // élève dont on remplace la photo
 function photoState(){
   const ph = photosOf(cfgCls), noms = namesOf(cfgCls), n = Object.keys(ph).length;
@@ -608,35 +608,11 @@ $("#cfg-del").addEventListener("click",()=>{
 });
 
 /* ============ Séance ============ */
-/* Planche de photos : une seule image JPEG, cellules de 48x64, sept par ligne,
-   dans l'ordre exact de la liste. L'observateur n'a besoin que de l'indice. */
-const CELL_W = 48, CELL_H = 64, CELL_COLS = 7;
-function buildSheet(cls, names){
-  const ph = photosOf(cls);
-  if(!names.some(n=>ph[n])) return Promise.resolve(null);
-  const rows = Math.ceil(names.length / CELL_COLS);
-  const cv = document.createElement("canvas");
-  cv.width = CELL_COLS*CELL_W; cv.height = rows*CELL_H;
-  const cx = cv.getContext("2d");
-  cx.fillStyle = "#fff"; cx.fillRect(0,0,cv.width,cv.height);
-  return Promise.all(names.map((n,i)=>new Promise(res=>{
-    const src = ph[n]; if(!src) return res();
-    const im = new Image();
-    im.onload = ()=>{ cx.drawImage(im, (i%CELL_COLS)*CELL_W, Math.floor(i/CELL_COLS)*CELL_H, CELL_W, CELL_H); res(); };
-    im.onerror = res;
-    im.src = src;
-  }))).then(()=>cv.toDataURL("image/jpeg", 0.55));
-}
-$("#open").addEventListener("click", async ()=>{
+$("#open").addEventListener("click", ()=>{
   const cls=$("#cls").value;
   if($("#obsA").value===$("#obsB").value){ alert("Les deux observateurs doivent être deux élèves différents."); return; }
   const cfg=cfgOf(cls);
-  const btn=$("#open"); btn.disabled=true; btn.textContent="Préparation…";
-  let sheet=null;
-  try{ sheet = await buildSheet(cls, namesOf(cls)); }catch(e){ sheet=null; }
-  btn.disabled=false; btn.textContent="Ouvrir la séance";
   sess={cls, date:today(), names:namesOf(cls).slice(), cap:cfg.cap, types:cfg.types.map(t=>({...t})),
-        sheet, pack: sheet ? hash36(sheet) : "",
         A:{token:token6(), obs:$("#obsA").value, rep:null},
         B:{token:token6(), obs:$("#obsB").value, rep:null}};
   if(!save(K_S,sess)){ alert("Stockage saturé : la séance n'a pas pu être ouverte."); return; }
@@ -644,50 +620,9 @@ $("#open").addEventListener("click", async ()=>{
 });
 function payloadFor(p){
   return encSession({token:sess[p].token, poste:p, cls:sess.cls, date:sess.date,
-                     cap:sess.cap, types:sess.types, pack:sess.pack, names:sess.names});
+                     cap:sess.cap, types:sess.types, pack:"", names:sess.names});
 }
 
-/* ---- Émission de la planche : les fragments défilent en boucle, les deux
-   observateurs visent l'écran en même temps et les ramassent au passage. ---- */
-let psendTimer=null;
-function openPhotoSend(){
-  if(!sess || !sess.sheet) return;
-  const b64 = sess.sheet.slice(sess.sheet.indexOf(",")+1);
-  const txts = encPhotoFrames(sess.pack, b64);
-  $("#psend-lbl").textContent = `Photos de ${sess.cls}`;
-  $("#psend-info").textContent = `Préparation des ${txts.length} fragments…`;
-  $("#psend-qr").innerHTML = "";
-  $("#psend").classList.add("on");
-  setTimeout(()=>{
-    let type = 0;                       // même version pour tous : longueur identique
-    for(let t=4; t<=40 && !type; t++){
-      try{ const q=qrcode(t,"L"); q.addData(txts[0]); q.make(); type=t; }catch(e){}
-    }
-    if(!type){ $("#psend-info").textContent = "Fragment trop volumineux pour un QR code."; return; }
-    const svgs = txts.map(t=>{
-      const q=qrcode(type,"L"); q.addData(t); q.make();
-      const cell=Math.max(2, Math.floor(520/q.getModuleCount()));
-      return q.createSvgTag({cellSize:cell, margin:cell*2, scalable:false});
-    });
-    let k=0;
-    const tick=()=>{
-      $("#psend-qr").innerHTML = svgs[k];
-      const svg=$("#psend-qr").querySelector("svg");
-      if(svg){ svg.style.width="100%"; svg.style.height="auto"; svg.style.display="block"; }
-      $("#psend-info").textContent =
-        `Fragment ${k+1} sur ${svgs.length} · les deux observateurs visent l'écran jusqu'à ce que leur barre soit pleine`;
-      k=(k+1)%svgs.length;
-    };
-    tick(); psendTimer=setInterval(tick, 250);
-  }, 30);
-}
-function closePhotoSend(){
-  clearInterval(psendTimer); psendTimer=null;
-  $("#psend-qr").innerHTML="";
-  $("#psend").classList.remove("on");
-}
-$("#send-photos").addEventListener("click", openPhotoSend);
-$("#psend-close").addEventListener("click", closePhotoSend);
 function showCodes(){
   $("#codes-sub").textContent=`${sess.cls} · ${frDate(sess.date)}`;
   const cnt=roleCounts(sess.cls);
@@ -708,8 +643,6 @@ function showCodes(){
       $("#zoom").classList.add("on");
     });
   });
-  $("#send-photos").style.display = sess.pack ? "block" : "none";
-  $("#no-photos").style.display = sess.pack ? "none" : "block";
   step("#step-codes");
 }
 $("#zoom-close").addEventListener("click",()=>$("#zoom").classList.remove("on"));
@@ -724,7 +657,7 @@ $("#cancel-sess").addEventListener("click",()=>{
   if(!confirm("Annuler cette séance ?")) return;
   sess=null; localStorage.removeItem(K_S); step("#step-start");
 });
-$("#to-recv").addEventListener("click", ()=>{ closePhotoSend(); showRecv(); });
+$("#to-recv").addEventListener("click", showRecv);
 $("#back-codes").addEventListener("click",()=>{ if(scanner) scanner.stop(); showCodes(); });
 
 function showRecv(){ refreshRecv(); step("#step-recv"); }
@@ -789,7 +722,13 @@ scanner=makeScanner($("#vid"),$("#cnv"),t=>{
   takeReport(t);
   if(sess.A.rep&&sess.B.rep) stopScan();
 }, m=>{ $("#recv-err").textContent=m; },
-{continu:true, onStop:()=>{ if(sess) refreshRecv(); }});
+{continu:true, zoom:$("#scan-zoom"), onStop:()=>{ if(sess) refreshRecv(); }});
+$("#scan-photo").addEventListener("change", async e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  $("#recv-err").textContent="Lecture de la photo…";
+  try{ const t=await decodeQRFile(f); $("#recv-err").textContent=""; lastScan=t; takeReport(t); }
+  catch(err){ $("#recv-err").textContent=err.message; }
+});
 $("#scan-go").addEventListener("click",()=>{
   if(sess.A.rep&&sess.B.rep) return;
   $("#recv-err").textContent=""; lastScan="";

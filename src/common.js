@@ -31,7 +31,9 @@ function defaultCfg(modele){
 const b36 = n => Math.max(0,Math.round(n)).toString(36);
 const p36 = s => parseInt(s,36)||0;
 
-/* --- QR de séance : jeton + poste + classe + date + planche + liste --- */
+/* --- QR de séance : jeton + poste + classe + date + liste ---
+   Le champ « planche » reste dans le format, toujours vide : les photos ne partent
+   plus vers les observateurs, et le garder évite de casser la lecture entre deux versions. */
 function encSession(s){
   const ty = s.types.map(t=>[t.w, t.l, t.d||""].join("*")).join("~");
   return ["PVS3", s.token, s.poste, s.cls, s.date, s.cap||0, ty, s.pack||"", s.names.join("~")].join("|");
@@ -46,26 +48,8 @@ function decSession(txt){
           names:p.slice(8).join("|").split("~").filter(Boolean)};
 }
 
-/* --- Planche de photos, découpée en fragments QR ---
-   Une seule image JPEG pour toute la classe : un en-tête au lieu de vingt et un.
-   900 caractères par fragment maintient chaque QR en version 22 (105 modules),
-   la densité qui se lit déjà correctement d'un iPad à l'autre. */
-const PHOTO_CHUNK = 900;
-function encPhotoFrames(pack, b64){
-  const n = Math.ceil(b64.length / PHOTO_CHUNK), out = [];
-  for(let i=0; i<n; i++)
-    out.push(["PVP1", pack, i+1, n, b64.substr(i*PHOTO_CHUNK, PHOTO_CHUNK)].join("|"));
-  return out;
-}
-function decPhotoFrame(txt){
-  const p = String(txt||"").trim().split("|");
-  if(p[0]!=="PVP1" || p.length<5) return null;
-  const i = +p[2], n = +p[3];
-  if(!(i>=1 && n>=1 && i<=n)) return null;
-  return {pack:p[1], i, n, data:p.slice(4).join("|")};
-}
-/* Empreinte courte d'une planche : permet à l'observateur de savoir s'il a
-   déjà la bonne, et d'ignorer un fragment venu d'une autre classe. */
+/* Empreinte courte d'une chaîne : sert à reconnaître une image déjà vue dans le
+   trombinoscope PDF (les silhouettes des élèves sans photo). */
 function hash36(s){
   let h = 2166136261 >>> 0;
   for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
@@ -121,72 +105,186 @@ function drawQR(el, text, px){
   return ok;
 }
 
-/* --- Lecteur QR via caméra --- */
-/* iOS coupe la caméra quand l'iPad se verrouille ou qu'on change d'application,
+/* --- Lecteur QR via caméra ---
+   iOS coupe la caméra quand l'iPad se verrouille ou qu'on change d'application,
    sans que la page le sache : le flux est mort mais le lecteur se croit actif.
-   D'où la vérification à chaque démarrage, et l'arrêt franc en arrière-plan. */
+   D'où la vérification à chaque démarrage, et l'arrêt franc en arrière-plan.
+   iPadOS suspend aussi la caméra quand Safari partage l'écran avec une autre
+   application (Split View, Slide Over, Stage Manager) : la pastille reste
+   allumée, l'image reste noire. On le détecte et on le dit.
+
+   Zoom : celui de l'objectif quand Safari le permet, sinon un zoom numérique —
+   on agrandit l'image à l'écran et on n'analyse que le centre. On demande une
+   image en haute définition pour que ce recadrage garde assez de détails.
+   Un passage sur deux, on regarde en plus le centre de plus près : un code
+   tenu un peu loin se lit sans toucher au zoom. */
+const SCAN_MAX = 1024;   // côté maximal de l'image confiée à jsQR
+const SCAN_COUPE = "iOS a coupé la caméra juste après l'avoir ouverte. Utilisez « Photographier le QR code » : l'appareil photo de l'iPad fait le même travail, avec son zoom.";
+const SCAN_PAUSE = "iPadOS a suspendu la caméra. Cela arrive quand Safari partage l'écran avec une autre application (Split View, Slide Over, Stage Manager) : passez Safari en plein écran, puis touchez de nouveau le bouton.";
 function makeScanner(video, canvas, onFound, onError, opts){
-  const continu = !!(opts && opts.continu);   // ramasser plusieurs codes sans s'arrêter
-  const onStop = (opts && opts.onStop) || (()=>{});
-  let stream=null, raf=null, running=false, starting=false;
+  opts = opts || {};
+  const continu = !!opts.continu;              // ramasser plusieurs codes sans s'arrêter
+  const onStop = opts.onStop || (()=>{});
+  const zin = opts.zoom || null;               // curseur <input type="range">
+  const zctl = zin && zin.closest(".zoomctl"), zout = zctl && zctl.querySelector("output");
+  const box = video.parentElement;
+  let stream=null, track=null, raf=null, running=false, starting=false;
+  let zoom=1, native=null, pass=0, frames=0, watch=null, relance=false;
   const ctx = canvas.getContext("2d",{willReadFrequently:true});
+
   function alive(){
-    const t = stream && stream.getVideoTracks()[0];
-    return !!(t && t.readyState==="live" && !t.muted && !video.paused);
+    return !!(track && track.readyState==="live" && !track.muted && !video.paused);
+  }
+  async function open(){
+    const base = {facingMode:"environment"};
+    try{ return await navigator.mediaDevices.getUserMedia({video:{...base, width:{ideal:1920}, height:{ideal:1080}}}); }
+    catch(e){
+      if(e && /Overconstrained|ConstraintNotSatisfied/.test(e.name)) return navigator.mediaDevices.getUserMedia({video:base});
+      throw e;
+    }
   }
   async function start(){
     if(starting) return;
     if(running){ if(alive()) return; stop(); }
     starting = true;
-    try{
-      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-    }catch(e){
+    try{ stream = await open(); }
+    catch(e){
       starting = false;
-      onError(`Caméra indisponible (${e && e.name || "erreur"}). Vérifiez l'autorisation dans Safari, fermez les autres applications qui utilisent la caméra, ou utilisez le repli texte.`);
+      onError(`Caméra indisponible (${e && e.name || "erreur"}). Vérifiez l'autorisation dans Réglages › Safari › Appareil photo, fermez les autres onglets ou applications qui utilisent la caméra, ou utilisez le repli texte.`);
       onStop();
       return;
     }
     starting = false;
-    stream.getVideoTracks().forEach(t=>t.addEventListener("ended",()=>{ if(running){ stop(); onStop(); } }));
-    video.srcObject = stream;
+    track = stream.getVideoTracks()[0];
+    const t0 = Date.now();
+    track.addEventListener("ended",()=>{
+      if(!running) return;
+      stop();
+      if(Date.now()-t0 < 5000 && !relance){ relance = true; start(); return; }
+      onError(SCAN_COUPE); onStop();
+    });
+    track.addEventListener("mute",()=>{ if(running) onError(SCAN_PAUSE); });
+    track.addEventListener("unmute",()=>{ if(running) onError(""); });
     video.setAttribute("playsinline","");
     video.muted = true;
-    try{ await video.play(); }
-    catch(e){
-      stop();
-      onError(`La vidéo de la caméra ne démarre pas (${e && e.name || "erreur"}). Touchez de nouveau le bouton.`);
-      onStop();
-      return;
-    }
-    running = true;
+    video.autoplay = true;      // démarre seule dès que l'image arrive, même si play() échoue
+    video.srcObject = stream;
+    running = true; frames = 0;
+    lancer(stream);
+    setupZoom();
+    if(track.muted) onError(SCAN_PAUSE);
+    clearTimeout(watch);
+    watch = setTimeout(()=>{        // caméra ouverte mais aucune image : dire ce qu'on voit
+      if(!running || frames) return;
+      onError(track.muted ? SCAN_PAUSE :
+        `La caméra est ouverte mais ne renvoie aucune image (vidéo ${video.readyState}, piste ${track.readyState}, ` +
+        `${video.videoWidth}×${video.videoHeight}). Utilisez « Photographier le QR code », ou fermez les autres onglets qui utilisent la caméra et passez Safari en plein écran.`);
+    }, 4000);
     loop();
+  }
+
+  /* Juste après l'autorisation de la caméra, iOS interrompt souvent le premier
+     play() (AbortError) alors que le flux est bon : on réessaie au lieu de tout
+     couper. L'attente de 4 s plus bas dit ce qu'il en est si rien ne vient. */
+  async function lancer(s){
+    for(let k=0; k<6; k++){
+      if(stream !== s || !running) return;
+      try{ await video.play(); return; }
+      catch(e){ await new Promise(r=>setTimeout(r, 200 + 200*k)); }
+    }
+  }
+  function setupZoom(){
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    native = (caps.zoom && caps.zoom.max > caps.zoom.min) ? {min:caps.zoom.min, max:caps.zoom.max} : null;
+    if(zin){
+      zin.min = 1; zin.max = native ? Math.min(native.max/native.min, 8) : 4; zin.step = 0.1;
+      zctl.hidden = false;
+    }
+    setZoom(zoom);
+  }
+  function setZoom(z){
+    const max = native ? Math.min(native.max/native.min, 8) : 4;
+    zoom = Math.min(max, Math.max(1, +z || 1));
+    if(zin) zin.value = zoom;
+    if(zout) zout.textContent = zoom.toFixed(1).replace(".", ",") + "×";
+    if(!running) return;
+    if(native){
+      video.style.transform = "";
+      track.applyConstraints({advanced:[{zoom: native.min*zoom}]})
+        .catch(()=>{ native = null; setZoom(zoom); });   // refusé : zoom numérique
+    }else{
+      video.style.transform = zoom > 1 ? `scale(${zoom})` : "";
+    }
+  }
+  if(zin) zin.addEventListener("input", ()=>setZoom(zin.value));
+  // pincer l'image pour zoomer, comme dans l'appareil photo
+  let pinch = null;
+  const ecart = t => Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+  box.addEventListener("touchstart", e=>{
+    if(e.touches.length===2 && running) pinch = {d:ecart(e.touches), z:zoom};
+  }, {passive:true});
+  box.addEventListener("touchmove", e=>{
+    if(!pinch || e.touches.length!==2) return;
+    e.preventDefault();
+    setZoom(pinch.z * ecart(e.touches) / pinch.d);
+  }, {passive:false});
+  box.addEventListener("touchend", e=>{ if(e.touches.length<2) pinch = null; });
+
+  function decode(w, h){
+    const z = (native ? 1 : zoom) * ((pass++ % 2) ? 2 : 1);
+    const sw = w/z, sh = h/z, k = Math.min(1, SCAN_MAX/Math.max(sw, sh));
+    const dw = Math.round(sw*k), dh = Math.round(sh*k);
+    if(canvas.width!==dw || canvas.height!==dh){ canvas.width=dw; canvas.height=dh; }
+    ctx.drawImage(video, (w-sw)/2, (h-sh)/2, sw, sh, 0, 0, dw, dh);
+    return jsQR(ctx.getImageData(0,0,dw,dh).data, dw, dh, {inversionAttempts:"dontInvert"});
   }
   function loop(){
     if(!running) return;
-    if(video.readyState === video.HAVE_ENOUGH_DATA){
-      const w = video.videoWidth, h = video.videoHeight;
-      if(w && h){
-        canvas.width=w; canvas.height=h;
-        ctx.drawImage(video,0,0,w,h);
-        const img = ctx.getImageData(0,0,w,h);
-        const res = jsQR(img.data, w, h, {inversionAttempts:"dontInvert"});
-        if(res && res.data){
-          if(continu){ onFound(res.data); }
-          else { stop(); onFound(res.data); return; }
-        }
+    const w = video.videoWidth, h = video.videoHeight;
+    if(video.readyState >= video.HAVE_CURRENT_DATA && w && h){
+      if(!frames++) onError("");
+      const res = decode(w, h);
+      if(res && res.data){
+        if(continu){ onFound(res.data); }
+        else { stop(); onFound(res.data); return; }
       }
     }
     raf = requestAnimationFrame(loop);
   }
   function stop(){
     running=false;
+    clearTimeout(watch);
     if(raf) cancelAnimationFrame(raf);
     if(stream) stream.getTracks().forEach(t=>t.stop());
-    stream=null;
+    stream=null; track=null;
     video.srcObject=null;
+    video.style.transform="";
+    if(zctl) zctl.hidden = true;
   }
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden && running){ stop(); onStop(); }
   });
-  return {start, stop, get running(){ return running; }};
+  return {start(){ relance = false; return start(); }, stop, get running(){ return running; }};
+}
+
+/* Repli quand le flux vidéo ne tient pas (iOS le coupe parfois, surtout depuis
+   l'écran d'accueil) : une photo prise avec l'appareil photo de l'iPad, qui a son
+   propre zoom, décodée ici. Plusieurs tailles et le centre, du plus probable au moins. */
+async function decodeQRFile(file){
+  const url = URL.createObjectURL(file);
+  try{
+    const im = await new Promise((res, rej)=>{
+      const i = new Image(); i.onload = ()=>res(i); i.onerror = ()=>rej(new Error("Photo illisible.")); i.src = url;
+    });
+    const W = im.naturalWidth, H = im.naturalHeight;
+    const cv = document.createElement("canvas"), cx = cv.getContext("2d",{willReadFrequently:true});
+    for(const [part, cote] of [[1,1600],[1,1000],[0.6,1200],[0.4,1000],[1,2400]]){
+      const sw = W*part, sh = H*part, k = Math.min(1, cote/Math.max(sw, sh));
+      cv.width = Math.round(sw*k); cv.height = Math.round(sh*k);
+      cx.drawImage(im, (W-sw)/2, (H-sh)/2, sw, sh, 0, 0, cv.width, cv.height);
+      const r = jsQR(cx.getImageData(0,0,cv.width,cv.height).data, cv.width, cv.height, {inversionAttempts:"attemptBoth"});
+      if(r && r.data) return r.data;
+    }
+    throw new Error("Aucun QR code lisible sur cette photo. Rapprochez-vous ou zoomez, en gardant l'iPad bien en face de l'écran.");
+  }finally{ URL.revokeObjectURL(url); }
 }
