@@ -41,6 +41,7 @@ $$(".tabs button[data-t]").forEach(b=>b.addEventListener("click",()=>{
   $$(".tabs button[data-t]").forEach(x=>x.classList.toggle("on",x===b));
   $$(".screen").forEach(x=>x.classList.remove("on"));
   $(b.dataset.t).classList.add("on");
+  stopScan();
   if(b.dataset.t==="#t-suivi") paintAnnual();
   if(b.dataset.t==="#t-classes") cstep("#c-list");
   window.scrollTo(0,0);
@@ -48,6 +49,7 @@ $$(".tabs button[data-t]").forEach(b=>b.addEventListener("click",()=>{
 function step(id){
   ["#step-start","#step-codes","#step-recv","#step-sum"].forEach(x=>$(x).style.display="none");
   $(id).style.display="block"; window.scrollTo(0,0);
+  if(id!=="#step-recv") stopScan();
 }
 function cstep(id){
   ["#c-list","#c-source","#c-map","#c-edit","#c-model","#c-cfg"].forEach(x=>$(x).style.display="none");
@@ -733,20 +735,67 @@ function refreshRecv(){
     `<span class="pill ${b?"ok":""}">Poste B ${b?"reçu":"en attente"}</span>`;
   $("#to-sum").disabled=!(a||b);
   $("#to-sum").textContent=(a&&b)?"Voir la synthèse":"Voir la synthèse (un seul relevé)";
+  $("#scan-go").textContent = (a&&b) ? "Les deux relevés sont reçus"
+    : (scanner&&scanner.running) ? "Recherche du QR code…" : "Activer la caméra";
 }
+function stopScan(){ if(scanner){ scanner.stop(); if(sess) refreshRecv(); } }
+function isoLocal(ms){
+  const d=new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+/* Un relevé dont le jeton ne correspond à aucun poste vient d'une séance annulée,
+   ou d'un nouveau tirage fait après que les observateurs ont scanné. On peut le
+   rattacher quand même : les élèves y sont désignés par leur rang dans la liste,
+   ce qui reste juste tant que la liste de la classe n'a pas changé depuis. */
 function takeReport(txt){
   let r; try{ r=decReport(txt); }catch(e){ $("#recv-err").textContent=e.message; return false; }
-  const p=(r.token===sess.A.token)?"A":(r.token===sess.B.token)?"B":null;
-  if(!p){ $("#recv-err").textContent="Ce relevé ne correspond à aucun code émis pour cette séance."; return false; }
-  if(sess[p].rep){ $("#recv-err").textContent=`Le relevé du poste ${p} a déjà été reçu.`; return false; }
+  if(["A","B"].some(x=>sess[x].rep && sess[x].rep.token===r.token && sess[x].rep.start===r.start)){
+    $("#recv-err").textContent="Ce relevé a déjà été reçu."; return false;
+  }
+  let p=(r.token===sess.A.token)?"A":(r.token===sess.B.token)?"B":null;
+  if(p && sess[p].rep){ $("#recv-err").textContent=`Le relevé du poste ${p} a déjà été reçu.`; return false; }
+  if(!p){
+    p = !sess.A.rep ? "A" : !sess.B.rep ? "B" : null;
+    if(!p){ $("#recv-err").textContent="Les deux postes ont déjà reçu un relevé."; return false; }
+    const d=isoLocal(r.start), other=sess[p==="A"?"B":"A"].rep;
+    if(other && isoLocal(other.start)!==d){
+      $("#recv-err").textContent=`Ce relevé date du ${frDate(d)}, l'autre relevé reçu du ${frDate(isoLocal(other.start))} : ils ne viennent pas de la même séance.`;
+      return false;
+    }
+    const h=new Date(r.start);
+    if(!confirm(`Ce relevé ne correspond à aucun code émis pour cette séance.
+
+`+
+      `Il a été commencé le ${frDate(d)} à ${h.getHours()} h ${String(h.getMinutes()).padStart(2,"0")}. `+
+      `Le rattacher quand même au poste ${p} (${sess[p].obs}) ?`+
+      (d!==sess.date ? `
+
+La séance sera enregistrée à la date du ${frDate(d)}.` : "")+
+      `
+
+À ne faire que si la liste de ${sess.cls} n'a pas changé depuis cette séance.`)){
+      $("#recv-err").textContent=""; return false;
+    }
+    sess.date=d;
+  }
   sess[p].rep=r; save(K_S,sess); $("#recv-err").textContent=""; refreshRecv(); return true;
 }
+/* La caméra reste allumée entre deux relevés : l'éteindre et la rallumer à chaque
+   code faisait clignoter le flux. On ignore simplement le code qu'on vient de lire. */
+let lastScan="";
 scanner=makeScanner($("#vid"),$("#cnv"),t=>{
+  if(t===lastScan) return;
+  lastScan=t;
   takeReport(t);
-  if(!(sess.A.rep&&sess.B.rep)) scanner.start();
-  else $("#scan-go").textContent="Les deux relevés sont reçus";
-}, m=>{ $("#recv-err").textContent=m; });
-$("#scan-go").addEventListener("click",()=>{ $("#recv-err").textContent=""; scanner.start(); $("#scan-go").textContent="Recherche du QR code…"; });
+  if(sess.A.rep&&sess.B.rep) stopScan();
+}, m=>{ $("#recv-err").textContent=m; },
+{continu:true, onStop:()=>{ if(sess) refreshRecv(); }});
+$("#scan-go").addEventListener("click",()=>{
+  if(sess.A.rep&&sess.B.rep) return;
+  $("#recv-err").textContent=""; lastScan="";
+  $("#scan-go").textContent="Recherche du QR code…";
+  scanner.start();
+});
 $("#paste-go").addEventListener("click",()=>{ if(takeReport($("#paste-r").value)) $("#paste-r").value=""; });
 
 /* ============ Roue de vérification des prises de notes ============

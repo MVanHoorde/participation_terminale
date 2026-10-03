@@ -153,7 +153,8 @@ function show(id){document.querySelectorAll(".screen").forEach(e=>e.classList.re
 scanner = makeScanner($("#vid"), $("#cnv"), t=>{
   try{ begin(decSession(t)); }
   catch(e){ $("#scan-err").textContent = e.message; scanner.start(); }
-}, m=>{ $("#scan-err").textContent = m; });
+}, m=>{ $("#scan-err").textContent = m; },
+   {onStop:()=>{ $("#scan-go").textContent="Activer la caméra"; }});
 
 $("#scan-go").addEventListener("click", ()=>{ $("#scan-err").textContent=""; scanner.start(); $("#scan-go").textContent="Recherche du code…"; });
 $("#paste-go").addEventListener("click", ()=>{
@@ -211,7 +212,8 @@ function onFrag(txt){
   pscan.stop();
   startLive();
 }
-pscan = makeScanner($("#pvid"), $("#pcnv"), onFrag, m=>{ $("#perr").textContent = m; }, {continu:true});
+pscan = makeScanner($("#pvid"), $("#pcnv"), onFrag, m=>{ $("#perr").textContent = m; },
+  {continu:true, onStop:()=>{ $("#pgo").textContent = "Activer la caméra"; }});
 $("#pgo").addEventListener("click", ()=>{
   $("#perr").textContent = ""; pscan.start(); $("#pgo").textContent = "Réception en cours…";
 });

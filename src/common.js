@@ -122,21 +122,42 @@ function drawQR(el, text, px){
 }
 
 /* --- Lecteur QR via caméra --- */
+/* iOS coupe la caméra quand l'iPad se verrouille ou qu'on change d'application,
+   sans que la page le sache : le flux est mort mais le lecteur se croit actif.
+   D'où la vérification à chaque démarrage, et l'arrêt franc en arrière-plan. */
 function makeScanner(video, canvas, onFound, onError, opts){
   const continu = !!(opts && opts.continu);   // ramasser plusieurs codes sans s'arrêter
-  let stream=null, raf=null, running=false;
+  const onStop = (opts && opts.onStop) || (()=>{});
+  let stream=null, raf=null, running=false, starting=false;
   const ctx = canvas.getContext("2d",{willReadFrequently:true});
+  function alive(){
+    const t = stream && stream.getVideoTracks()[0];
+    return !!(t && t.readyState==="live" && !t.muted && !video.paused);
+  }
   async function start(){
-    if(running) return;
+    if(starting) return;
+    if(running){ if(alive()) return; stop(); }
+    starting = true;
     try{
       stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
     }catch(e){
-      onError("Caméra indisponible. Vérifiez l'autorisation dans Safari, ou utilisez le repli texte.");
+      starting = false;
+      onError(`Caméra indisponible (${e && e.name || "erreur"}). Vérifiez l'autorisation dans Safari, fermez les autres applications qui utilisent la caméra, ou utilisez le repli texte.`);
+      onStop();
       return;
     }
+    starting = false;
+    stream.getVideoTracks().forEach(t=>t.addEventListener("ended",()=>{ if(running){ stop(); onStop(); } }));
     video.srcObject = stream;
     video.setAttribute("playsinline","");
-    await video.play().catch(()=>{});
+    video.muted = true;
+    try{ await video.play(); }
+    catch(e){
+      stop();
+      onError(`La vidéo de la caméra ne démarre pas (${e && e.name || "erreur"}). Touchez de nouveau le bouton.`);
+      onStop();
+      return;
+    }
     running = true;
     loop();
   }
@@ -162,6 +183,10 @@ function makeScanner(video, canvas, onFound, onError, opts){
     if(raf) cancelAnimationFrame(raf);
     if(stream) stream.getTracks().forEach(t=>t.stop());
     stream=null;
+    video.srcObject=null;
   }
-  return {start, stop};
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden && running){ stop(); onStop(); }
+  });
+  return {start, stop, get running(){ return running; }};
 }
