@@ -7,7 +7,7 @@ Produit A01-professeur.html et A01-observateur.html à la racine du dépôt.
 Ces deux fichiers sont générés : ne jamais les modifier à la main, toute
 correction se fait dans src/ puis on relance ce script.
 """
-import pathlib, sys
+import base64, pathlib, sys
 
 ROOT = pathlib.Path(__file__).parent
 SRC, VEN = ROOT / "src", ROOT / "vendor"
@@ -33,7 +33,9 @@ jsq += "\n;if(typeof jsQR==='undefined'&&typeof window!=='undefined'&&window.jsQ
 for src, dst in [("observateur.src.html", "A01-observateur.html"),
                  ("professeur.src.html",  "A01-professeur.html")]:
     h = read(SRC / src)
-    subs = [("/*__CSS__*/", css), ("/*__COMMON__*/", com),
+    # Icône de l'écran d'accueil, intégrée pour que la page reste autonome (src/icone-<page>.png).
+    icone = base64.b64encode((SRC / f"icone-{dst[4:-5]}.png").read_bytes()).decode("ascii")
+    subs = [("/*__ICONE__*/", icone), ("/*__CSS__*/", css), ("/*__COMMON__*/", com),
             ("/*__QRGEN__*/", qrg), ("/*__JSQR__*/", jsq)]
     if "/*__APP__*/" in h:
         subs.append(("/*__APP__*/", imp + "\n" + app))

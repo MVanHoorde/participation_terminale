@@ -13,6 +13,8 @@
 *.jpeg
 *.png
 *.webp
+# Seule exception : les icônes de l'écran d'accueil, dessinées (aucune photo)
+!src/icone-*.png
 
 .DS_Store
 node_modules/
