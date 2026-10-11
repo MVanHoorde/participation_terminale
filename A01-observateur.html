@@ -165,7 +165,11 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
   <div class="wrap">
     <h1>Relevé terminé</h1>
     <p class="sub" id="end-sub">—</p>
-    <div class="note">Montrez cet écran au professeur pour qu'il le scanne. Le relevé reste disponible tant qu'il n'a pas été effacé.</div>
+    <div id="pont-end" hidden>
+      <button class="btn btn-teal" id="send">Envoyer au professeur</button>
+      <p class="sub" id="send-etat" style="font-size:15px;margin:0 0 18px"></p>
+    </div>
+    <div class="note" id="end-note">Montrez cet écran au professeur pour qu'il le scanne. Le relevé reste disponible tant qu'il n'a pas été effacé.</div>
     <div class="qrbox" id="qr"></div>
     <details class="card" style="padding:0;border:none;background:none;margin-bottom:14px">
       <summary style="padding:10px 0;color:var(--soft);font-size:15px">Repli : copier le relevé en texte</summary>
@@ -274,6 +278,17 @@ function decReport(txt){
   }) : [];
   const abs = p[4] ? p[4].split(";").filter(Boolean).map(p36) : [];
   return {token:p[1], start, ev, abs};
+}
+
+/* --- Pont avec Résonance ---
+   Ouverte dans un cadre de Résonance (même origine), la page lui signale ses
+   évènements et reçoit d'elle séances et relevés : Résonance se charge du réseau
+   et du chiffrement, la page n'appelle jamais Internet elle-même. Ouverte seule,
+   PONT vaut null et tout passe par les QR codes, comme avant. */
+const PONT = (()=>{ try{ return (window.parent!==window && window.parent.RESONANCE_PONT) || null; }catch(e){ return null; } })();
+function pont(evt, data){
+  if(!PONT || typeof PONT[evt]!=="function") return null;
+  try{ return PONT[evt](data); }catch(e){ console.error(e); return null; }
 }
 
 /* --- Divers --- */
@@ -638,16 +653,42 @@ $("#finish").addEventListener("click",()=>{
   const payload=encReport({token:live.token,start:live.start,ev:live.ev,abs:live.abs||[]});
   $("#raw").value=payload;
   drawQR($("#qr"),payload,520);
+  if(PONT){
+    $("#pont-end").hidden=false; $("#send").disabled=false; $("#send-etat").textContent="";
+    $("#end-note").textContent="Touche « Envoyer au professeur » : le relevé part chiffré, seul ton professeur peut le lire. Le QR code reste un secours.";
+  }
   show("#s-end");
+});
+/* Dans Résonance : le relevé part chiffré pour le professeur. Il reste sur la tablette
+   jusqu'à « Effacer et quitter », au cas où il faudrait le renvoyer ou le montrer. */
+$("#send").addEventListener("click", async ()=>{
+  const b=$("#send"), etat=$("#send-etat");
+  b.disabled=true; etat.textContent="Envoi…";
+  try{
+    await pont("envoyerReleve", {jeton:live.token, charge:$("#raw").value});
+    etat.textContent="Relevé envoyé ✓ Tu peux maintenant l'effacer de la tablette.";
+    b.textContent="Renvoyer"; b.disabled=false;
+  }catch(e){
+    etat.textContent=(e && e.message) || "Envoi impossible : vérifie la connexion, puis réessaie.";
+    b.disabled=false;
+  }
 });
 $("#back").addEventListener("click",()=>{ tick=setInterval(refresh,1000); show("#s-live"); });
 $("#wipe").addEventListener("click",()=>{
-  if(!confirm("Effacer le relevé de cet appareil ? À faire une fois que le professeur a scanné le relevé.")) return;
+  if(!confirm("Effacer le relevé de cet appareil ? À faire une fois que le professeur a reçu le relevé.")) return;
   localStorage.removeItem(K); localStorage.removeItem("pv.obs.sess");
   live=null; S=null;
   $("#scan-go").textContent="Activer la caméra";
   show("#s-home");
+  pont("releveEfface");
 });
+
+/* ---------- Résonance ---------- */
+window.PARTICIPATION = {
+  /* Séance reçue par le réseau, déjà déchiffrée : même chemin que le scan d'un QR. */
+  demarrer(charge){ begin(decSession(charge)); },
+  enCours: () => (live && S) ? {jeton:live.token} : null
+};
 
 /* ---------- Reprise ---------- */
 (function(){

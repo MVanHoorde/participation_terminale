@@ -616,8 +616,16 @@ $("#open").addEventListener("click", ()=>{
         A:{token:token6(), obs:$("#obsA").value, rep:null},
         B:{token:token6(), obs:$("#obsB").value, rep:null}};
   if(!save(K_S,sess)){ alert("Stockage saturé : la séance n'a pas pu être ouverte."); return; }
-  showCodes();
+  showCodes(); signalerSeance();
 });
+/* Dans Résonance : la séance part chiffrée sur les tablettes des deux observateurs.
+   Renvoyée à chaque ouverture et à chaque nouveau tirage ; Résonance reconnaît les
+   jetons déjà envoyés et retire ceux d'un tirage abandonné. */
+function signalerSeance(){
+  if(!sess) return;
+  pont("seance", {cls:sess.cls, date:sess.date,
+    postes:["A","B"].map(p=>({poste:p, obs:sess[p].obs, jeton:sess[p].token, recu:!!sess[p].rep, charge:payloadFor(p)}))});
+}
 function payloadFor(p){
   return encSession({token:sess[p].token, poste:p, cls:sess.cls, date:sess.date,
                      cap:sess.cap, types:sess.types, pack:"", names:sess.names});
@@ -651,11 +659,12 @@ $("#redraw").addEventListener("click",()=>{
   if(d.length<2) return;
   sess.A.obs=d[0]; sess.B.obs=d[1];
   sess.A.token=token6(); sess.B.token=token6();
-  save(K_S,sess); showCodes();
+  save(K_S,sess); showCodes(); signalerSeance();
 });
 $("#cancel-sess").addEventListener("click",()=>{
   if(!confirm("Annuler cette séance ?")) return;
   sess=null; localStorage.removeItem(K_S); step("#step-start");
+  pont("seanceFermee");
 });
 $("#to-recv").addEventListener("click", showRecv);
 $("#back-codes").addEventListener("click",()=>{ if(scanner) scanner.stop(); showCodes(); });
@@ -1163,13 +1172,16 @@ $("#validate").addEventListener("click",()=>{
                 conv:merged.conv, names:sess.names.slice(), pts:ret,
                 conf:merged.conf, solo:merged.solo, abs:merged.abs, arb:{...arb}, adj:{...adj}});
   if(!save(K_H,history)){ alert("Enregistrement impossible : stockage saturé."); return; }
+  const cls=sess.cls;
   sess=null; localStorage.removeItem(K_S); merged=null;
   step("#step-start"); fillClassSelects();
+  pont("seanceValidee", {cls});
   alert("Séance enregistrée.");
 });
 $("#discard").addEventListener("click",()=>{
   if(!confirm("Abandonner cette séance sans l'enregistrer ?")) return;
   sess=null; localStorage.removeItem(K_S); step("#step-start");
+  pont("seanceFermee");
 });
 
 /* ============ Suivi annuel ============ */
@@ -1337,7 +1349,36 @@ $("#bilans").addEventListener("click",()=>{
     }).join("");
 });
 
+/* ============ Résonance ============
+   Ce que Résonance lit ou dépose dans la page quand elle l'ouvre dans un cadre. */
+window.PARTICIPATION = {
+  classes: () => clsNames().map(c=>({nom:c, eleves:namesOf(c).slice()})),
+  /* Relevé reçu par le réseau, déjà déchiffré. Jamais de rattachement d'un relevé
+     orphelin ici : un jeton inconnu vient d'un tirage abandonné, on l'ignore. */
+  recevoirReleve(txt){
+    if(!sess) return "sans-seance";
+    let r; try{ r=decReport(txt); }catch(e){ return "illisible"; }
+    if(["A","B"].some(p=>sess[p].rep && sess[p].rep.token===r.token)) return "deja";
+    if(r.token!==sess.A.token && r.token!==sess.B.token) return "autre";
+    if(!takeReport(txt)) return "refuse";
+    if($("#step-codes").style.display!=="none") showRecv();
+    return "ok";
+  },
+  /* Points de période de chaque élève, tels que le suivi les affiche. */
+  suivi(c){
+    if(!classes[c]) return [];
+    const A=annualFor(c), avecBilan=A.cfg.resti!=="none" && A.N;
+    return A.names.map((n,i)=>{
+      const r=avecBilan ? restitution(A.cfg, A.norm[i]) : null;
+      return {nom:n, points:A.norm[i], objectif:A.cfg.objectif, seances:A.N, presences:A.pres[i],
+              roles:A.roles[n]||0, bilan:r ? r.v+r.u : ""};
+    });
+  },
+  etat(html){ ["#pont-codes","#pont-recv"].forEach(s=>{ const e=$(s); if(e) e.innerHTML=html; }); }
+};
+
 /* ============ Démarrage ============ */
 fillClassSelects(); paintClassList();
 if(sess){ if(sess.A.rep||sess.B.rep) showRecv(); else showCodes(); }
 paintAnnual();
+signalerSeance();

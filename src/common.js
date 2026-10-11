@@ -73,6 +73,17 @@ function decReport(txt){
   return {token:p[1], start, ev, abs};
 }
 
+/* --- Pont avec Résonance ---
+   Ouverte dans un cadre de Résonance (même origine), la page lui signale ses
+   évènements et reçoit d'elle séances et relevés : Résonance se charge du réseau
+   et du chiffrement, la page n'appelle jamais Internet elle-même. Ouverte seule,
+   PONT vaut null et tout passe par les QR codes, comme avant. */
+const PONT = (()=>{ try{ return (window.parent!==window && window.parent.RESONANCE_PONT) || null; }catch(e){ return null; } })();
+function pont(evt, data){
+  if(!PONT || typeof PONT[evt]!=="function") return null;
+  try{ return PONT[evt](data); }catch(e){ console.error(e); return null; }
+}
+
 /* --- Divers --- */
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function token6(){

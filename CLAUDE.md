@@ -14,12 +14,14 @@ Cible : iPad sous Safari, en classe, souvent sans réseau. Environ 33 élèves p
 
 ## Contraintes d'architecture — décidées, ne pas rediscuter
 
-1. **Aucun serveur, aucune base de données, aucun compte.** Tout vit dans `localStorage`.
-2. **Aucune ressource chargée depuis le réseau.** Pas de CDN, pas de police distante, pas
-   d'appel `fetch` sortant. Les pages doivent fonctionner en mode avion.
+1. **Les pages elles-mêmes n'ont ni serveur, ni base de données, ni compte.** Tout vit dans
+   `localStorage`. Depuis octobre 2026, les comptes et le réseau appartiennent à Résonance
+   (voir « Pont avec Résonance ») : les pages A01 n'en savent rien.
+2. **Aucune ressource chargée depuis le réseau par les pages A01.** Pas de CDN, pas de police
+   distante, pas d'appel `fetch`. Elles doivent fonctionner en mode avion.
 3. **Une page = un seul fichier HTML autonome**, produit par `build.py`.
-4. **Le QR code est le seul transport**, dans les deux sens. L'AirDrop a été écarté : il est
-   souvent bloqué par le MDM de l'établissement.
+4. **Le QR code reste le transport de secours**, dans les deux sens, et le seul quand la page
+   est ouverte seule. L'AirDrop a été écarté : il est souvent bloqué par le MDM de l'établissement.
 5. **Aucun nom d'élève dans le dépôt ni sur l'hébergeur.** Les listes ne circulent que dans les
    charges utiles des QR et dans le `localStorage` du professeur.
 6. **Pas de dépendance npm ajoutée.** Les deux bibliothèques de `vendor/` sont figées.
@@ -104,6 +106,22 @@ sont remplacés à la construction.
   et un passage sur deux on n'analyse que le centre agrandi deux fois. Le zoom passe par la
   contrainte `zoom` de la piste quand Safari la propose, sinon il est numérique.
 
+## Pont avec Résonance
+
+Décidé le 11/10/2026 : les élèves utilisent Résonance (dépôt `tutorat_pc_isaac`, même origine
+`mvanhoorde.github.io`), qui ouvre ces pages dans un cadre (`participation.js` de Résonance).
+
+- `PONT` (`common.js`) vaut `window.parent.RESONANCE_PONT` dans le cadre, `null` sinon. Tout appel
+  passe par `pont(évènement, données)` et doit rester sans effet quand la page est seule.
+- Professeur → Résonance : `seance` (à l'ouverture, au nouveau tirage, au chargement),
+  `seanceFermee`, `seanceValidee`. Résonance → professeur : `PARTICIPATION.classes()`,
+  `recevoirReleve(txt)`, `suivi(cls)`, `etat(html)`.
+- Observateur → Résonance : `envoyerReleve` (bouton « Envoyer au professeur »), `releveEfface`.
+  Résonance → observateur : `PARTICIPATION.demarrer(charge)`, `enCours()`.
+- Les charges échangées sont exactement celles des QR (`PVS3`, `PVR2`) : Résonance les chiffre
+  de bout en bout (ECDH P-256 + AES-GCM), le serveur ne les lit jamais.
+- Publier ce dépôt **avant** Résonance quand le pont change : Résonance ouvre les pages en ligne.
+
 ## Formats des charges QR
 
 - Séance, du professeur vers l'observateur :
@@ -121,7 +139,8 @@ numéro de version et adapter les deux côtés dans le même commit.
    sont en clair. C'est le point le plus important.
 2. **Notion de période** — l'objectif est dit « de période » mais le suivi cumule toute
    l'année. Il faut des bornes : remise à zéro des points, report du compteur de rôles.
-3. **Purge automatique** du relevé sur l'iPad de l'élève après transmission.
+3. **Purge automatique** du relevé sur l'iPad de l'élève après transmission (dans Résonance :
+   quand le professeur a marqué le relevé reçu).
 4. **Verrouillage automatique** de la page professeur après quelques minutes d'inactivité.
 5. **Fusion d'élève** quand l'orthographe d'un nom déjà enregistré est corrigée : son historique
    se détache aujourd'hui.
@@ -129,7 +148,8 @@ numéro de version et adapter les deux côtés dans le même commit.
 
 ## Ce qu'il ne faut pas faire
 
-- Ajouter un backend, une authentification en ligne, une synchronisation cloud.
+- Ajouter un backend, une authentification ou un appel réseau dans les pages A01 : cela se fait
+  dans Résonance, à travers le pont.
 - Committer un fichier de sauvegarde `.json` : il contient des données nominatives d'élèves.
 - Modifier les fichiers générés de la racine.
 - Élargir le périmètre sans le signaler explicitement.
