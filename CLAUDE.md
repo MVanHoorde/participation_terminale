@@ -106,6 +106,17 @@ sont remplacés à la construction.
   et un passage sur deux on n'analyse que le centre agrandi deux fois. Le zoom passe par la
   contrainte `zoom` de la piste quand Safari la propose, sinon il est numérique.
 
+## Périodes
+
+Décidé le 17/10/2026 : le suivi se fait par période (une entre deux vacances, cinq dans l'année).
+`classes[cls].periode` vaut `{n, debut, fin}` ; chaque séance validée porte `periode` (absent : P1).
+`cloturerPeriode()` archive la période dans `periodesCloses`, range les compteurs de la roue dans
+`tiragesPasses` (avec leur numéro de période) et ouvre la suivante ; après P5, la période garde son `fin`.
+Le Suivi affiche une période à la fois. Le bilan « note » est sur 10 : c'est la part participation d'une
+note de période sur 20 calculée par Résonance (prise de notes et bonus s'y ajoutent).
+Dans Résonance, la clôture se fait depuis le Bilan de période (base et application ensemble) ; la page
+seule garde son bouton « Clôturer la période », qui exporte une sauvegarde juste avant.
+
 ## Pont avec Résonance
 
 Décidé le 11/10/2026 : les élèves utilisent Résonance (dépôt `tutorat_pc_isaac`, même origine
@@ -115,7 +126,8 @@ Décidé le 11/10/2026 : les élèves utilisent Résonance (dépôt `tutorat_pc_
   passe par `pont(évènement, données)` et doit rester sans effet quand la page est seule.
 - Professeur → Résonance : `seance` (à l'ouverture, au nouveau tirage, au chargement),
   `seanceFermee`, `seanceValidee`. Résonance → professeur : `PARTICIPATION.classes()`,
-  `recevoirReleve(txt)`, `suivi(cls)`, `etat(html)`.
+  `recevoirReleve(txt)`, `suivi(cls)` (période en cours : points, participation sur 10, passages
+  à la roue), `periode(cls)`, `cloturer(cls, n)`, `etat(html)`.
 - Observateur → Résonance : `envoyerReleve` (bouton « Envoyer au professeur »), `releveEfface`.
   Résonance → observateur : `PARTICIPATION.demarrer(charge)`, `enCours()`.
 - Les charges échangées sont exactement celles des QR (`PVS3`, `PVR2`) : Résonance les chiffre

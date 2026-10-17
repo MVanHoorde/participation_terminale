@@ -181,14 +181,21 @@
 <!-- ================= SUIVI ================= -->
 <section class="screen" id="t-suivi">
   <div class="wrap">
-    <h1>Suivi de l'année</h1>
+    <h1>Suivi de la période</h1>
     <p class="sub" id="suivi-sub">—</p>
     <div id="backup-warn"></div>
-    <div class="field">
-      <label for="cls2">Classe</label>
-      <select id="cls2"></select>
+    <div class="row" style="gap:12px;align-items:flex-end">
+      <div class="field grow">
+        <label for="cls2">Classe</label>
+        <select id="cls2"></select>
+      </div>
+      <div class="field">
+        <label for="per2">Période</label>
+        <select id="per2"></select>
+      </div>
     </div>
     <div class="tbl" id="annual"></div>
+    <div id="periode-box"></div>
     <h3 style="margin:6px 0 8px">Séances enregistrées</h3>
     <p class="sub" style="font-size:14px;margin-bottom:8px">Reprenez une séance pour corriger les points d'un élève oublié.</p>
     <div class="tbl" id="seances"></div>
@@ -330,7 +337,7 @@
           <option value="none">Formatif seul, aucune note</option>
           <option value="bonus">Bonus de 0 à +1 sur la moyenne</option>
           <option value="echelle">Échelle à quatre niveaux</option>
-          <option value="note">Note sur 20</option>
+          <option value="note">Note sur 10</option>
         </select>
       </div>
       <div class="field" id="cfg-obj-wrap">

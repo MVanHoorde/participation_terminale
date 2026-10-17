@@ -254,14 +254,21 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
 <!-- ================= SUIVI ================= -->
 <section class="screen" id="t-suivi">
   <div class="wrap">
-    <h1>Suivi de l'année</h1>
+    <h1>Suivi de la période</h1>
     <p class="sub" id="suivi-sub">—</p>
     <div id="backup-warn"></div>
-    <div class="field">
-      <label for="cls2">Classe</label>
-      <select id="cls2"></select>
+    <div class="row" style="gap:12px;align-items:flex-end">
+      <div class="field grow">
+        <label for="cls2">Classe</label>
+        <select id="cls2"></select>
+      </div>
+      <div class="field">
+        <label for="per2">Période</label>
+        <select id="per2"></select>
+      </div>
     </div>
     <div class="tbl" id="annual"></div>
+    <div id="periode-box"></div>
     <h3 style="margin:6px 0 8px">Séances enregistrées</h3>
     <p class="sub" style="font-size:14px;margin-bottom:8px">Reprenez une séance pour corriger les points d'un élève oublié.</p>
     <div class="tbl" id="seances"></div>
@@ -403,7 +410,7 @@ input:focus,textarea:focus,select:focus{outline:2px solid var(--teal);outline-of
           <option value="none">Formatif seul, aucune note</option>
           <option value="bonus">Bonus de 0 à +1 sur la moyenne</option>
           <option value="echelle">Échelle à quatre niveaux</option>
-          <option value="note">Note sur 20</option>
+          <option value="note">Note sur 10</option>
         </select>
       </div>
       <div class="field" id="cfg-obj-wrap">
@@ -515,7 +522,7 @@ const MODELES = {
             desc:"De 0 à +1 point sur la moyenne. Ne peut jamais pénaliser."},
   echelle: {nom:"Échelle à 4 niveaux",resti:"echelle",solo:"all" , cap:8,  objectif:12, credit:5,
             desc:"Insuffisant / fragile / satisfaisant / très bonne maîtrise."},
-  note:    {nom:"Note sur 20",       resti:"note",    solo:"all" , cap:10, objectif:16, credit:6,
+  note:    {nom:"Note sur 10",       resti:"note",    solo:"all" , cap:10, objectif:16, credit:6,
             desc:"Conversion par objectif fixe, jamais par rapport à la classe."}
 };
 
@@ -1400,6 +1407,25 @@ const clsNames = () => Object.keys(classes);
 const cfgOf = c => (classes[c] && classes[c].cfg) || defaultCfg("formatif");
 const namesOf = c => (classes[c] && classes[c].names) || [];
 const photosOf = c => (classes[c] && classes[c].photos) || {};
+/* ============ Périodes ============
+   Une période va d'une clôture à la suivante : une par intervalle entre deux vacances, cinq dans
+   l'année. Chaque séance validée porte son numéro ; celles d'avant les périodes valent P1.
+   La clôture fige le suivi de la période et remet la roue à zéro. */
+const PERIODES_MAX = 5;
+const periodeOf = c => (classes[c] && classes[c].periode) || {n:1, debut:null, fin:null};
+const perDe = h => h.periode || 1;
+function cloturerPeriode(c){
+  const k = classes[c]; if(!k) return null;
+  const p = periodeOf(c);
+  if(p.fin) return null;                                   // P5 déjà close : l'année est finie
+  const avant = JSON.stringify(k);
+  k.periodesCloses = (k.periodesCloses || []).concat([{n:p.n, debut:p.debut, fin:today()}]);
+  k.tiragesPasses = (k.tiragesPasses || []).concat([{fin:today(), periode:p.n, tirages:k.tirages || {}}]);
+  k.tirages = {};
+  k.periode = p.n < PERIODES_MAX ? {n:p.n+1, debut:today(), fin:null} : {n:p.n, debut:p.debut, fin:today()};
+  if(!save(K_C, classes)){ classes[c] = JSON.parse(avant); return null; }
+  return k.periode;
+}
 /* Vignette d'élève. Absente = case hachurée, pour que les colonnes restent alignées. */
 function avatar(c, n, gr){
   const p = photosOf(c)[n], k = "ava" + (gr ? " gr" : "");
@@ -1618,7 +1644,7 @@ function paintModels(){
     const avant = classes[draft.name] || {};
     classes[draft.name]={names:draft.names, cfg:defaultCfg(b.dataset.m)};
     if(avant.photos) classes[draft.name].photos = avant.photos;
-    ["tirages","tiragesPasses","absJour"].forEach(k=>{ if(avant[k]) classes[draft.name][k] = avant[k]; });
+    ["tirages","tiragesPasses","absJour","periode","periodesCloses"].forEach(k=>{ if(avant[k]) classes[draft.name][k] = avant[k]; });
     save(K_C,classes); fillClassSelects();
     openCfg(draft.name);
   }));
@@ -2247,7 +2273,7 @@ function paintTally(st){
         </span>
       </div>`).join("")}
     </div>
-    <button class="btn btn-ghost" id="wheel-reset" style="margin:0"${gele}>Nouvelle période : compteurs à zéro</button>`;
+    <p class="sub" style="margin:10px 0 0;font-size:13.5px">Période ${periodeOf(wheelCtx.cls).n}. Les compteurs repartent à zéro à la clôture de la période (onglet Suivi).</p>`;
   const cls = wheelCtx.cls, nomDe = i => wheelCtx.names[+i];
   const apres = nom => { if(nom === wheelPick) wheelPick = null; paintWheel(); };
   $$("#wheel-tally [data-ab]").forEach(e=>e.addEventListener("click",()=>{
@@ -2260,13 +2286,6 @@ function paintTally(st){
     if(!t[nom]) delete t[nom];
     save(K_C, classes); apres(nom);
   }));
-  $("#wheel-reset").addEventListener("click",()=>{
-    if(!confirm(`Nouvelle période pour « ${cls} » : tous les compteurs de tirages repartent à zéro. L'ancien décompte est archivé dans les sauvegardes. Continuer ?`)) return;
-    const k = classes[cls];
-    k.tiragesPasses = (k.tiragesPasses || []).concat([{fin:today(), tirages:k.tirages || {}}]);
-    k.tirages = {};
-    save(K_C, classes); wheelPick = null; paintWheel();
-  });
 }
 function spinWheel(){
   if(wheelSpin) return;
@@ -2538,7 +2557,7 @@ $("#keep").addEventListener("change", ()=>{ paintArb(); drawSumTable(); });
 
 $("#validate").addEventListener("click",()=>{
   const mode=$("#keep").value, ret=retained(mode);
-  history.push({cls:sess.cls, date:sess.date, mode, obsA:sess.A.obs, obsB:sess.B.obs,
+  history.push({cls:sess.cls, date:sess.date, periode:periodeOf(sess.cls).n, mode, obsA:sess.A.obs, obsB:sess.B.obs,
                 conv:merged.conv, names:sess.names.slice(), pts:ret,
                 conf:merged.conf, solo:merged.solo, abs:merged.abs, arb:{...arb}, adj:{...adj}});
   if(!save(K_H,history)){ alert("Enregistrement impossible : stockage saturé."); return; }
@@ -2554,9 +2573,10 @@ $("#discard").addEventListener("click",()=>{
   pont("seanceFermee");
 });
 
-/* ============ Suivi annuel ============ */
-function annualFor(c){
-  const cfg=cfgOf(c), names=namesOf(c), hs=history.filter(h=>h.cls===c);
+/* ============ Suivi de la période ============ */
+function annualFor(c, p){
+  if(p === undefined) p = periodeOf(c).n;
+  const cfg=cfgOf(c), names=namesOf(c), hs=history.filter(h=>h.cls===c && perDe(h)===p);
   const tot=names.map(()=>0), pres=names.map(()=>0), roles={};
   hs.forEach(h=>{
     const absSet=new Set(h.abs||[]);
@@ -2570,24 +2590,50 @@ function annualFor(c){
   // ramené au nombre de séances de la classe, pour ne pas pénaliser les absences
   const N=hs.length;
   const norm=names.map((n,i)=> pres[i] ? Math.round(tot[i]*N/pres[i]) : 0);
-  return {cfg,names,hs,tot,pres,norm,roles,N};
+  return {cfg,names,hs,tot,pres,norm,roles,N,p};
 }
+/* Participation sur 10 : la part de la note de période que publie Résonance. */
+const sur10 = (cfg, pts) => cfg.objectif ? Math.min(10, Math.round(pts/cfg.objectif*100)/10) : 0;
 function restitution(cfg, pts){
   const r = cfg.objectif ? pts/cfg.objectif : 0;
-  if(cfg.resti==="note")    return {v:(Math.min(20, Math.round(r*20*10)/10)).toFixed(1).replace(".",","), u:"/20"};
+  if(cfg.resti==="note")    return {v:sur10(cfg, pts).toFixed(1).replace(".",","), u:"/10"};
   if(cfg.resti==="bonus")   return {v:"+"+(Math.min(1, Math.round(r*10)/10)).toFixed(1).replace(".",","), u:"pt"};
   if(cfg.resti==="echelle") return {v:["Insuffisant","Fragile","Satisfaisant","Très bonne maîtrise"][r>=.8?3:r>=.5?2:r>=.25?1:0], u:""};
   return null;
 }
+let perVue = null;                 // période affichée dans le Suivi ; null : celle en cours
+function fillPeriodes(c){
+  const per = periodeOf(c);
+  if(!perVue || perVue > per.n) perVue = per.n;
+  $("#per2").innerHTML = Array.from({length:per.n}, (_,i)=>i+1).map(n=>
+    `<option value="${n}"${n===perVue?" selected":""}>P${n}${n===per.n && !per.fin ? " · en cours" : " · close"}</option>`).join("");
+}
+function paintPeriodeBox(c, p){
+  const close = (classes[c].periodesCloses || []).find(x=>x.n===p);
+  $("#periode-box").innerHTML = close
+    ? `<p class="sub" style="font-size:14px">Période ${p} close le ${frDate(close.fin)} : ce suivi est figé.</p>`
+    : PONT
+      ? `<div class="note">Fin de période : clôturez depuis le <b>Bilan de période</b> de Résonance, sous ce cadre. Participation, prise de notes, bonus et roue y sont clôturés ensemble.</div>`
+      : `<button class="btn btn-ghost" id="per-close">Clôturer la période ${p}</button>
+         <p class="help" style="margin-top:-6px">Fige ce suivi, qui reste consultable, et remet la roue à zéro. Une sauvegarde est exportée juste avant.</p>`;
+  const b = $("#per-close");
+  if(b) b.addEventListener("click", ()=>{
+    if(!confirm(`Clôturer la période ${p} de « ${c} » ?\n\nLe suivi de la période est figé, la roue repart à zéro, et les prochaines séances compteront pour la période ${Math.min(p+1, PERIODES_MAX)}.`)) return;
+    exporterSauvegarde();
+    if(!cloturerPeriode(c)){ alert("Clôture impossible : stockage saturé."); return; }
+    perVue = null; paintAnnual();
+  });
+}
 function paintAnnual(){
   const c=$("#cls2").value;
-  if(!c){ $("#annual").innerHTML=`<div class="r none"><span class="nm">Créez d'abord une classe.</span></div>`; $("#suivi-sub").textContent=""; return; }
-  const A=annualFor(c);
+  if(!c){ $("#annual").innerHTML=`<div class="r none"><span class="nm">Créez d'abord une classe.</span></div>`; $("#suivi-sub").textContent=""; $("#per2").innerHTML=""; $("#periode-box").innerHTML=""; return; }
+  fillPeriodes(c);
+  const A=annualFor(c, perVue);
   const conv=A.hs.filter(h=>h.conv!=null);
-  $("#suivi-sub").textContent = A.N
+  $("#suivi-sub").textContent = `Période ${A.p} · ` + (A.N
     ? `${A.N} séance${A.N>1?"s":""} · modèle « ${(MODELES[A.cfg.modele]||MODELES.formatif).nom} »`+
       (conv.length?` · convergence moyenne ${Math.round(conv.reduce((s,h)=>s+h.conv,0)/conv.length)}%`:"")
-    : "Aucune séance enregistrée pour cette classe.";
+    : "aucune séance enregistrée pour cette classe.");
   const showR = A.cfg.resti!=="none" && A.N;
   const rows=A.names.map((n,i)=>({n,p:A.norm[i],r:A.roles[n]||0,
                                   x:showR?restitution(A.cfg,A.norm[i]):null,
@@ -2602,7 +2648,8 @@ function paintAnnual(){
       <span class="n ${o.p?"hi":"dim"}">${o.p}</span>
       ${showR?`<span class="n" style="width:auto;min-width:70px">${esc(o.x.v)}${o.x.u}</span>`:""}</div>`).join("");
 
-  paintSeances(c);
+  paintPeriodeBox(c, A.p);
+  paintSeances(c, A.p);
   const last=load(K_B,null), days=last?Math.floor((Date.now()-last)/86400000):null;
   $("#backup-warn").innerHTML = !history.length ? ""
     : (days===null||days>=14)
@@ -2613,8 +2660,8 @@ function paintAnnual(){
    On corrige les points retenus, jamais le releve des observateurs : conf et
    solo restent intacts, l'ecart est isole dans adj et reste donc reversible. */
 let corrH = null, corrPts = null;
-function paintSeances(c){
-  const hs = history.map((h,k)=>({h,k})).filter(o=>o.h.cls===c).reverse();
+function paintSeances(c, p){
+  const hs = history.map((h,k)=>({h,k})).filter(o=>o.h.cls===c && perDe(o.h)===p).reverse();
   $("#seances").innerHTML = hs.length
     ? hs.map(o=>`<div class="r">
         <span class="nm">${frDate(o.h.date)}<br><span class="sub" style="font-size:13px">${esc(o.h.obsA)} et ${esc(o.h.obsB)}${o.h.conv!=null?` · ${o.h.conv}%`:""}</span></span>
@@ -2673,16 +2720,20 @@ $("#corr-save").addEventListener("click",()=>{
 });
 $("#corr-close").addEventListener("click",()=>$("#corr").classList.remove("on"));
 
-$("#cls2").addEventListener("change", paintAnnual);
+$("#cls2").addEventListener("change", ()=>{ perVue = null; paintAnnual(); });
+$("#per2").addEventListener("change", ()=>{ perVue = +$("#per2").value; paintAnnual(); });
 
-$("#export").addEventListener("click",()=>{
+/* Les périodes (closes comprises) vivent dans classes et dans le champ periode des séances :
+   une sauvegarde les emporte, et une ancienne sauvegarde se relit (tout y vaut P1). */
+function exporterSauvegarde(){
   const txt=JSON.stringify({format:"participation-v2", exporte:new Date().toISOString(), classes, history},null,2);
   const url=URL.createObjectURL(new Blob([txt],{type:"application/json"}));
   const a=document.createElement("a"); a.href=url;
   a.download=`participation-sauvegarde-${today()}.json`; a.click();
   setTimeout(()=>URL.revokeObjectURL(url),3000);
-  save(K_B,Date.now()); paintAnnual();
-});
+  save(K_B,Date.now());
+}
+$("#export").addEventListener("click",()=>{ exporterSauvegarde(); paintAnnual(); });
 $("#restore").addEventListener("change", async e=>{
   const f=e.target.files[0]; if(!f) return;
   try{
@@ -2702,14 +2753,14 @@ $("#restore").addEventListener("change", async e=>{
 /* ============ Bilans élèves ============ */
 $("#bilans").addEventListener("click",()=>{
   const c=$("#cls2").value; if(!c) return;
-  const A=annualFor(c);
-  if(!A.N){ $("#bilan-out").innerHTML=`<p class="sub">Aucune séance à résumer.</p>`; return; }
+  const A=annualFor(c, perVue || periodeOf(c).n);
+  if(!A.N){ $("#bilan-out").innerHTML=`<p class="sub">Aucune séance à résumer pour la période ${A.p}.</p>`; return; }
   const seances=A.names.map(()=>0), parType={};
   A.hs.forEach(h=>h.names.forEach((n,i)=>{ const k=A.names.indexOf(n); if(k>=0 && h.pts[i]) seances[k]++; }));
   $("#bilan-out").innerHTML=`<p class="sub" style="margin-top:14px">${A.names.length} bilans, un par élève. À coller dans un message Pronote individuel.</p>`+
     A.names.map((n,i)=>{
       const r=A.cfg.resti!=="none"?restitution(A.cfg,A.norm[i]):null;
-      const t=`Participation orale — ${c}\n${n}\n\n`+
+      const t=`Participation orale — ${c} — période ${A.p}\n${n}\n\n`+
         `Séances observées : ${A.N}. Tu es intervenu(e) lors de ${seances[i]} d'entre elles.\n`+
         (A.N-A.pres[i]>0?`Absences : ${A.N-A.pres[i]} (neutralisées dans le calcul).\n`:"")+
         `Points de participation : ${A.norm[i]} (objectif de la période : ${A.cfg.objectif}).\n`+
@@ -2734,15 +2785,30 @@ window.PARTICIPATION = {
     if($("#step-codes").style.display!=="none") showRecv();
     return "ok";
   },
-  /* Points de période de chaque élève, tels que le suivi les affiche. */
+  /* Points de la période en cours de chaque élève, tels que le suivi les affiche ;
+     participation : sur 10, la part de la note de période ; tirages : passages à la roue. */
   suivi(c){
     if(!classes[c]) return [];
-    const A=annualFor(c), avecBilan=A.cfg.resti!=="none" && A.N;
+    const A=annualFor(c), avecBilan=A.cfg.resti!=="none" && A.N, t=tiragesOf(c);
     return A.names.map((n,i)=>{
       const r=avecBilan ? restitution(A.cfg, A.norm[i]) : null;
-      return {nom:n, points:A.norm[i], objectif:A.cfg.objectif, seances:A.N, presences:A.pres[i],
-              roles:A.roles[n]||0, bilan:r ? r.v+r.u : ""};
+      return {nom:n, periode:A.p, points:A.norm[i], objectif:A.cfg.objectif, participation:sur10(A.cfg, A.norm[i]),
+              seances:A.N, presences:A.pres[i], roles:A.roles[n]||0, tirages:t[n]||0, bilan:r ? r.v+r.u : ""};
     });
+  },
+  periode: c => classes[c] ? {...periodeOf(c)} : null,
+  /* Clôture demandée par le Bilan de période de Résonance, qui a déjà clôturé en base.
+     n : la période que Résonance vient de clôturer ; on refuse si l'application n'y est pas. */
+  cloturer(c, n){
+    if(!classes[c]) return {erreur:"classe inconnue de l'application"};
+    const p=periodeOf(c);
+    if(p.fin) return {erreur:"la période 5 est déjà close dans l'application"};
+    if(p.n!==n) return {erreur:`l'application est en période ${p.n}, pas ${n}`};
+    exporterSauvegarde();
+    const r=cloturerPeriode(c);
+    if(!r) return {erreur:"stockage saturé"};
+    perVue=null; paintAnnual();
+    return {periode:r};
   },
   etat(html){ ["#pont-codes","#pont-recv"].forEach(s=>{ const e=$(s); if(e) e.innerHTML=html; }); }
 };

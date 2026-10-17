@@ -17,7 +17,7 @@ const MODELES = {
             desc:"De 0 à +1 point sur la moyenne. Ne peut jamais pénaliser."},
   echelle: {nom:"Échelle à 4 niveaux",resti:"echelle",solo:"all" , cap:8,  objectif:12, credit:5,
             desc:"Insuffisant / fragile / satisfaisant / très bonne maîtrise."},
-  note:    {nom:"Note sur 20",       resti:"note",    solo:"all" , cap:10, objectif:16, credit:6,
+  note:    {nom:"Note sur 10",       resti:"note",    solo:"all" , cap:10, objectif:16, credit:6,
             desc:"Conversion par objectif fixe, jamais par rapport à la classe."}
 };
 
